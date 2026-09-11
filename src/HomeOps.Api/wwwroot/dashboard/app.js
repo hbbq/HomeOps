@@ -10,6 +10,8 @@ const dateFormatter = new Intl.DateTimeFormat(undefined, {
   timeStyle: "medium"
 });
 
+let isLoading = false;
+
 function formatValue(measurement) {
   if (measurement.kind.toLowerCase() === "boolean") {
     return Number(measurement.value) === 0 ? "No" : "Yes";
@@ -58,6 +60,11 @@ function render(measurements) {
 }
 
 async function loadMeasurements() {
+  if (isLoading) {
+    return;
+  }
+
+  isLoading = true;
   refreshButton.disabled = true;
   statusElement.classList.remove("error");
 
@@ -73,6 +80,7 @@ async function loadMeasurements() {
     statusElement.textContent = "Could not load measurements. Try refreshing again.";
     statusElement.classList.add("error");
   } finally {
+    isLoading = false;
     refreshButton.disabled = false;
   }
 }
