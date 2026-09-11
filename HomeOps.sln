@@ -5,6 +5,8 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HomeOps.Api", "src\HomeOps.Api\HomeOps.Api.csproj", "{B20482E7-D4EC-4E72-A638-9C39AF7948EA}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HomeOps.Api.Tests", "tests\HomeOps.Api.Tests\HomeOps.Api.Tests.csproj", "{563C4991-4A68-4E47-91A5-3CB3F5848057}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -15,5 +17,9 @@ Global
 		{B20482E7-D4EC-4E72-A638-9C39AF7948EA}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{B20482E7-D4EC-4E72-A638-9C39AF7948EA}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{B20482E7-D4EC-4E72-A638-9C39AF7948EA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{563C4991-4A68-4E47-91A5-3CB3F5848057}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{563C4991-4A68-4E47-91A5-3CB3F5848057}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{563C4991-4A68-4E47-91A5-3CB3F5848057}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{563C4991-4A68-4E47-91A5-3CB3F5848057}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

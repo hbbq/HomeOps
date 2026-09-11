@@ -15,8 +15,44 @@ if (string.IsNullOrWhiteSpace(connectionString))
 
 builder.Services.AddDbContextFactory<HomeOpsDbContext>(options =>
     options.UseSqlServer(connectionString, sql => sql.EnableRetryOnFailure()));
+builder.Services.Configure<AcquisitionOptions>(builder.Configuration.GetSection("Acquisition"));
 builder.Services.Configure<SimulatorOptions>(builder.Configuration.GetSection("Simulator"));
-builder.Services.AddSingleton<IMeasurementSource, SimulatedMeasurementSource>();
+builder.Services.Configure<SmartThingsOptions>(builder.Configuration.GetSection("SmartThings"));
+
+if (builder.Configuration.GetValue("Simulator:Enabled", true))
+{
+    builder.Services.AddSingleton<IMeasurementSource, SimulatedMeasurementSource>();
+}
+
+if (builder.Configuration.GetValue("SmartThings:Enabled", false))
+{
+    var smartThingsToken = builder.Configuration["SmartThings:Token"];
+    var smartThingsDeviceIds = builder.Configuration
+        .GetSection("SmartThings:DeviceIds")
+        .Get<string[]>() ?? [];
+
+    if (string.IsNullOrWhiteSpace(smartThingsToken))
+    {
+        throw new InvalidOperationException(
+            "SmartThings:Token is required when SmartThings is enabled. Supply it through user secrets or an environment variable.");
+    }
+
+    if (smartThingsDeviceIds.All(string.IsNullOrWhiteSpace))
+    {
+        throw new InvalidOperationException(
+            "At least one SmartThings:DeviceIds entry is required when SmartThings is enabled.");
+    }
+
+    builder.Services.AddHttpClient("SmartThings", (serviceProvider, client) =>
+    {
+        var options = serviceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<SmartThingsOptions>>().Value;
+        var baseUrl = options.BaseUrl.EndsWith('/') ? options.BaseUrl : $"{options.BaseUrl}/";
+        client.BaseAddress = new Uri(baseUrl, UriKind.Absolute);
+        client.Timeout = TimeSpan.FromSeconds(Math.Max(1, options.TimeoutSeconds));
+    });
+    builder.Services.AddSingleton<IMeasurementSource, SmartThingsMeasurementSource>();
+}
+
 builder.Services.AddHostedService<MeasurementIngestionService>();
 
 var app = builder.Build();

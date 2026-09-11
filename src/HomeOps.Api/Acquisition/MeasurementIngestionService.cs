@@ -5,11 +5,12 @@ using Microsoft.Extensions.Options;
 namespace HomeOps.Api.Acquisition;
 
 public sealed class MeasurementIngestionService(
-    IMeasurementSource source,
+    IEnumerable<IMeasurementSource> sources,
     IDbContextFactory<HomeOpsDbContext> dbContextFactory,
-    IOptions<SimulatorOptions> options,
+    IOptions<AcquisitionOptions> options,
     ILogger<MeasurementIngestionService> logger) : BackgroundService
 {
+    private readonly IReadOnlyCollection<IMeasurementSource> _sources = sources.ToArray();
     private readonly TimeSpan _interval = TimeSpan.FromSeconds(
         Math.Max(1, options.Value.IntervalSeconds));
 
@@ -19,9 +20,12 @@ public sealed class MeasurementIngestionService(
         {
             try
             {
-                var samples = await source.ReadAsync(stoppingToken);
-                await PersistAsync(samples, stoppingToken);
-                logger.LogInformation("Stored {MeasurementCount} simulated measurements", samples.Count);
+                var samples = await ReadSourcesAsync(_sources, logger, stoppingToken);
+                var storedCount = await PersistAsync(samples, stoppingToken);
+                logger.LogInformation(
+                    "Stored {MeasurementCount} changed measurements from {SourceCount} sources",
+                    storedCount,
+                    _sources.Count);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -36,11 +40,45 @@ public sealed class MeasurementIngestionService(
         }
     }
 
-    private async Task PersistAsync(
+    internal static async Task<IReadOnlyCollection<MeasurementSample>> ReadSourcesAsync(
+        IEnumerable<IMeasurementSource> sources,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        var samples = new List<MeasurementSample>();
+        foreach (var source in sources)
+        {
+            try
+            {
+                samples.AddRange(await source.ReadAsync(cancellationToken));
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                logger.LogError(
+                    exception,
+                    "Measurement acquisition from {MeasurementSource} failed",
+                    source.GetType().Name);
+            }
+        }
+
+        return samples;
+    }
+
+    private async Task<int> PersistAsync(
         IReadOnlyCollection<MeasurementSample> samples,
         CancellationToken cancellationToken)
     {
+        if (samples.Count == 0)
+        {
+            return 0;
+        }
+
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var storedCount = 0;
 
         foreach (var deviceSamples in samples.GroupBy(x => new { x.Source, x.DeviceId }))
         {
@@ -66,6 +104,7 @@ public sealed class MeasurementIngestionService(
                 device.Name = first.DeviceName;
             }
 
+            var latestValues = new Dictionary<string, decimal?>(StringComparer.Ordinal);
             foreach (var sample in deviceSamples)
             {
                 var point = device.MeasurementPoints.SingleOrDefault(x => x.Key == sample.PointKey);
@@ -87,14 +126,32 @@ public sealed class MeasurementIngestionService(
                     point.Unit = sample.Unit;
                 }
 
-                point.Measurements.Add(new Measurement
+                if (!latestValues.TryGetValue(sample.PointKey, out var previousValue))
                 {
-                    Value = sample.Value,
-                    Timestamp = sample.Timestamp
-                });
+                    previousValue = point.Id == 0
+                        ? null
+                        : await db.Measurements
+                            .Where(x => x.MeasurementPointId == point.Id)
+                            .OrderByDescending(x => x.Id)
+                            .Select(x => (decimal?)x.Value)
+                            .FirstOrDefaultAsync(cancellationToken);
+                    latestValues.Add(sample.PointKey, previousValue);
+                }
+
+                if (previousValue != sample.Value)
+                {
+                    point.Measurements.Add(new Measurement
+                    {
+                        Value = sample.Value,
+                        Timestamp = sample.Timestamp
+                    });
+                    latestValues[sample.PointKey] = sample.Value;
+                    storedCount++;
+                }
             }
         }
 
         await db.SaveChangesAsync(cancellationToken);
+        return storedCount;
     }
 }
