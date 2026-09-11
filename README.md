@@ -25,6 +25,8 @@ dotnet run --project src/HomeOps.Api
 
 The address is printed by ASP.NET Core at startup. To select one explicitly, set `ASPNETCORE_URLS`, for example `http://localhost:8080`.
 
+Open `/dashboard/` on that address (for example, `http://localhost:8080/dashboard/`) to view the latest measurements grouped by device. The dashboard refreshes every 30 seconds and displays timestamps in the browser's local timezone. It shows only measurement points that have at least one recorded value.
+
 ## Run as a container
 
 Build the Linux image from the repository root:
@@ -44,7 +46,7 @@ For a remote SQL Server, replace the server and credentials as appropriate. Keep
 ## HTTP API
 
 - `GET /api/devices` lists known devices and their measurement points.
-- `GET /api/measurements/latest` returns the latest stored value for every known point.
+- `GET /api/measurements/latest` returns the latest stored value for every known point that has recorded data.
 - `GET /api/measurement-points/{pointId}/history` returns newest-first history for one point.
 
 History accepts optional ISO 8601 `from` and `to` timestamps and a `limit`. The default limit is 500 and the maximum is 5,000. For example:

@@ -28,7 +28,11 @@ await using (var scope = app.Services.CreateAsyncScope())
     await db.Database.MigrateAsync();
 }
 
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 app.MapGet("/", () => Results.Ok(new { service = "HomeOps", version = "v1" }));
+app.MapGet("/dashboard", () => Results.Redirect("/dashboard/"));
 app.MapHomeOpsEndpoints();
 
 await app.RunAsync();
