@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HomeOps dashboard</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <div>
+      <p class="eyebrow">HomeOps</p>
+      <h1>Latest measurements</h1>
+    </div>
+    <button id="refresh" type="button">Refresh</button>
+  </header>
+
+  <main>
+    <p id="status" class="status" role="status" aria-live="polite">Loading latest measurements…</p>
+    <div id="devices" class="devices" aria-live="polite"></div>
+  </main>
+
+  <template id="device-template">
+    <section class="device">
+      <h2></h2>
+      <div class="measurements"></div>
+    </section>
+  </template>
+
+  <template id="measurement-template">
+    <article class="measurement">
+      <p class="point-name"></p>
+      <p class="value"></p>
+      <time></time>
+    </article>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -3,10 +3,11 @@
     "HomeOps.Api": {
       "commandName": "Project",
       "launchBrowser": true,
+      "launchUrl": "/dashboard",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development"
       },
-      "applicationUrl": "https://localhost:54284;http://localhost:54285"
+      "applicationUrl": "https://localhost:54109;http://localhost:54110"
     }
   }
 }
