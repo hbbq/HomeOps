@@ -7,11 +7,22 @@ public static class HomeOpsEndpoints
 {
     public static IEndpointRouteBuilder MapHomeOpsEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        var api = endpoints.MapGroup("/api");
+        var api = endpoints.MapGroup("/api").WithTags("HomeOps");
 
-        api.MapGet("/devices", GetDevicesAsync);
-        api.MapGet("/measurements/latest", GetLatestMeasurementsAsync);
-        api.MapGet("/measurement-points/{pointId:int}/history", GetHistoryAsync);
+        api.MapGet("/devices", GetDevicesAsync)
+            .WithName("GetDevices")
+            .WithSummary("List devices and their measurement points")
+            .Produces<List<DeviceResponse>>();
+        api.MapGet("/measurements/latest", GetLatestMeasurementsAsync)
+            .WithName("GetLatestMeasurements")
+            .WithSummary("Get the latest measurement for every known point")
+            .Produces<List<LatestMeasurementResponse>>();
+        api.MapGet("/measurement-points/{pointId:int}/history", GetHistoryAsync)
+            .WithName("GetMeasurementPointHistory")
+            .WithSummary("Get newest-first history for a measurement point")
+            .Produces<MeasurementHistoryResponse>()
+            .Produces<ApiErrorResponse>(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status404NotFound);
 
         return endpoints;
     }
@@ -24,19 +35,19 @@ public static class HomeOpsEndpoints
         var devices = await db.Devices
             .AsNoTracking()
             .OrderBy(x => x.Name)
-            .Select(x => new
+            .Select(x => new DeviceResponse
             {
-                x.Id,
-                x.Source,
-                sourceDeviceId = x.SourceDeviceId,
-                x.Name,
-                measurementPoints = x.MeasurementPoints.OrderBy(p => p.Name).Select(p => new
+                Id = x.Id,
+                Source = x.Source,
+                SourceDeviceId = x.SourceDeviceId,
+                Name = x.Name,
+                MeasurementPoints = x.MeasurementPoints.OrderBy(p => p.Name).Select(p => new MeasurementPointResponse
                 {
-                    p.Id,
-                    p.Key,
-                    p.Name,
-                    p.Kind,
-                    p.Unit
+                    Id = p.Id,
+                    Key = p.Key,
+                    Name = p.Name,
+                    Kind = p.Kind,
+                    Unit = p.Unit
                 })
             })
             .ToListAsync(cancellationToken);
@@ -54,21 +65,21 @@ public static class HomeOpsEndpoints
             .Where(point => point.Measurements.Any())
             .OrderBy(point => point.Device.Name)
             .ThenBy(point => point.Name)
-            .Select(point => new
+            .Select(point => new LatestMeasurementResponse
             {
-                deviceId = point.Device.Id,
-                deviceName = point.Device.Name,
-                pointId = point.Id,
-                pointKey = point.Key,
-                pointName = point.Name,
-                point.Kind,
-                point.Unit,
-                value = point.Measurements
+                DeviceId = point.Device.Id,
+                DeviceName = point.Device.Name,
+                PointId = point.Id,
+                PointKey = point.Key,
+                PointName = point.Name,
+                Kind = point.Kind,
+                Unit = point.Unit,
+                Value = point.Measurements
                     .OrderByDescending(value => value.Timestamp)
                     .ThenByDescending(value => value.Id)
                     .Select(value => value.Value)
                     .First(),
-                timestamp = point.Measurements
+                Timestamp = point.Measurements
                     .OrderByDescending(value => value.Timestamp)
                     .ThenByDescending(value => value.Id)
                     .Select(value => value.Timestamp)
@@ -89,7 +100,7 @@ public static class HomeOpsEndpoints
     {
         if (from > to)
         {
-            return Results.BadRequest(new { error = "'from' must be earlier than or equal to 'to'." });
+            return Results.BadRequest(new ApiErrorResponse("'from' must be earlier than or equal to 'to'."));
         }
 
         var resultLimit = Math.Clamp(limit ?? 500, 1, 5000);
@@ -97,15 +108,15 @@ public static class HomeOpsEndpoints
         var point = await db.MeasurementPoints
             .AsNoTracking()
             .Where(x => x.Id == pointId)
-            .Select(x => new
+            .Select(x => new MeasurementPointDetailsResponse
             {
-                x.Id,
-                x.Key,
-                x.Name,
-                x.Kind,
-                x.Unit,
-                deviceId = x.Device.Id,
-                deviceName = x.Device.Name
+                Id = x.Id,
+                Key = x.Key,
+                Name = x.Name,
+                Kind = x.Kind,
+                Unit = x.Unit,
+                DeviceId = x.Device.Id,
+                DeviceName = x.Device.Name
             })
             .SingleOrDefaultAsync(cancellationToken);
 
@@ -129,9 +140,13 @@ public static class HomeOpsEndpoints
             .OrderByDescending(x => x.Timestamp)
             .ThenByDescending(x => x.Id)
             .Take(resultLimit)
-            .Select(x => new { x.Value, x.Timestamp })
+            .Select(x => new MeasurementResponse {Value = x.Value, Timestamp = x.Timestamp })
             .ToListAsync(cancellationToken);
 
-        return Results.Ok(new { measurementPoint = point, measurements });
+        return Results.Ok(new MeasurementHistoryResponse
+        {
+            MeasurementPoint = point,
+            Measurements = measurements
+        });
     }
 }

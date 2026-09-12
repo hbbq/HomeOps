@@ -20,12 +20,14 @@ The simulator records temperature, humidity, and a 0/1 occupied state for one li
 
 ```powershell
 dotnet restore
+$env:ASPNETCORE_ENVIRONMENT = "Development"
 dotnet run --project src/HomeOps.Api
 ```
 
 The address is printed by ASP.NET Core at startup. To select one explicitly, set `ASPNETCORE_URLS`, for example `http://localhost:8080`.
 
 Open `/dashboard/` on that address (for example, `http://localhost:8080/dashboard/`) to view the latest measurements grouped by device. The dashboard refreshes every 30 seconds and displays timestamps in the browser's local timezone. It shows only measurement points that have at least one recorded value.
+When running in the `Development` environment, interactive Swagger UI is available at `/swagger` and the OpenAPI document at `/swagger/v1/swagger.json`. These endpoints are not exposed in other environments.
 
 ## Run as a container
 

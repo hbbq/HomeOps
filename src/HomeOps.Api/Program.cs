@@ -18,8 +18,24 @@ builder.Services.AddDbContextFactory<HomeOpsDbContext>(options =>
 builder.Services.Configure<SimulatorOptions>(builder.Configuration.GetSection("Simulator"));
 builder.Services.AddSingleton<IMeasurementSource, SimulatedMeasurementSource>();
 builder.Services.AddHostedService<MeasurementIngestionService>();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.SwaggerDoc("v1", new()
+    {
+        Title = "HomeOps API",
+        Version = "v1",
+        Description = "Read-only access to HomeOps devices and measurements."
+    });
+});
 
 var app = builder.Build();
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
 
 await using (var scope = app.Services.CreateAsyncScope())
 {
@@ -31,10 +47,16 @@ await using (var scope = app.Services.CreateAsyncScope())
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
-app.MapGet("/", () => Results.Ok(new { service = "HomeOps", version = "v1" }));
 app.MapGet("/dashboard", () => Results.Redirect("/dashboard/"));
+app.MapGet("/", () => Results.Ok(new ServiceInfoResponse("HomeOps", "v1")))
+    .WithName("GetServiceInfo")
+    .WithSummary("Get service information")
+    .WithTags("Service")
+    .Produces<ServiceInfoResponse>();
 app.MapHomeOpsEndpoints();
 
 await app.RunAsync();
 
 public partial class Program;
+
+public sealed record ServiceInfoResponse(string Service, string Version);
