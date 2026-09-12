@@ -12,7 +12,7 @@ $env:ConnectionStrings__HomeOps = "Server=localhost;Database=HomeOps;User Id=sa;
 
 The SQL login must be able to create or update the configured database. The service applies its checked-in Entity Framework Core migrations during startup. It stops with an error if the connection string is missing or SQL Server cannot be reached.
 
-All enabled sources run immediately after startup and every 30 seconds thereafter. Override the shared interval with `Acquisition__IntervalSeconds`; values below one second are treated as one second. The simulator is enabled by default and records temperature, humidity, and a 0/1 occupied state for one living-room device. Disable it with `Simulator__Enabled=false`.
+All enabled sources run immediately after startup and every 30 seconds thereafter. Override the shared interval with `Acquisition__IntervalSeconds`; values below one second are treated as one second. Source polling is concurrent, with `Acquisition__MaxConcurrentSourceReads` controlling the limit (default 4, clamped to 1-16). The simulator is enabled by default and records temperature, humidity, and a 0/1 occupied state for one living-room device. Disable it with `Simulator__Enabled=false`.
 
 ### SmartThings
 
@@ -25,7 +25,7 @@ $env:SmartThings__DeviceIds__0 = "<device-id>"
 $env:SmartThings__DeviceIds__1 = "<another-device-id>"
 ```
 
-For deployments, supply the same keys through environment or secret configuration. Never put the token in `appsettings.json` or an image layer. Optional settings are `SmartThings__BaseUrl` (default `https://api.smartthings.com/v1/`) and `SmartThings__TimeoutSeconds` (default 15).
+For deployments, supply the same keys through environment or secret configuration. Never put the token in `appsettings.json` or an image layer. Optional settings are `SmartThings__BaseUrl` (default `https://api.smartthings.com/v1/`), `SmartThings__TimeoutSeconds` (default 15), and `SmartThings__MaxConcurrentDeviceReads` (default 4, clamped to 1-16).
 
 Each selected device is queried through the SmartThings device and full-status endpoints. HomeOps ingests only numeric values for these capability attributes:
 
