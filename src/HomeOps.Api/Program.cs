@@ -44,6 +44,10 @@ await using (var scope = app.Services.CreateAsyncScope())
     await db.Database.MigrateAsync();
 }
 
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
+app.MapGet("/dashboard", () => Results.Redirect("/dashboard/"));
 app.MapGet("/", () => Results.Ok(new ServiceInfoResponse("HomeOps", "v1")))
     .WithName("GetServiceInfo")
     .WithSummary("Get service information")
