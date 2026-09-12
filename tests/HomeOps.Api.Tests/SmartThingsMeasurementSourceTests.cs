@@ -90,6 +90,35 @@ public sealed class SmartThingsMeasurementSourceTests
         });
     }
 
+    [Fact]
+    public async Task ReadAsync_ReadsDevicesWithBoundedConcurrencyAndOverlapsDeviceRequests()
+    {
+        var handler = new GatedMetadataHandler();
+        var client = new HttpClient(handler) { BaseAddress = new Uri("https://api.smartthings.com/v1/") };
+        var options = Options.Create(new SmartThingsOptions
+        {
+            Token = "secret-token",
+            DeviceIds = ["one", "two", "three"],
+            MaxConcurrentDeviceReads = 2
+        });
+        var source = new SmartThingsMeasurementSource(
+            new StubHttpClientFactory(client),
+            options,
+            NullLogger<SmartThingsMeasurementSource>.Instance);
+
+        var readTask = source.ReadAsync(CancellationToken.None);
+
+        Assert.Equal(2, handler.MetadataRequestCount);
+        Assert.Equal(2, handler.StatusRequestCount);
+
+        handler.ReleaseMetadata();
+        var samples = await readTask;
+
+        Assert.Equal(3, samples.Count);
+        Assert.Equal(3, handler.MetadataRequestCount);
+        Assert.Equal(3, handler.StatusRequestCount);
+    }
+
     private sealed class StubHandler(Func<HttpRequestMessage, HttpResponseMessage> responder) : HttpMessageHandler
     {
         public List<(string? AuthorizationScheme, string? AuthorizationParameter)> Requests { get; } = [];
@@ -104,5 +133,44 @@ public sealed class SmartThingsMeasurementSourceTests
     private sealed class StubHttpClientFactory(HttpClient client) : IHttpClientFactory
     {
         public HttpClient CreateClient(string name) => client;
+    }
+
+    private sealed class GatedMetadataHandler : HttpMessageHandler
+    {
+        private readonly TaskCompletionSource _releaseMetadata = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _metadataRequestCount;
+        private int _statusRequestCount;
+
+        public int MetadataRequestCount => Volatile.Read(ref _metadataRequestCount);
+        public int StatusRequestCount => Volatile.Read(ref _statusRequestCount);
+
+        public void ReleaseMetadata() => _releaseMetadata.SetResult();
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/status", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref _statusRequestCount);
+                return Task.FromResult(JsonResponse(
+                    """{"components":{"main":{"battery":{"battery":{"value":90,"unit":"%"}}}}}"""));
+            }
+
+            Interlocked.Increment(ref _metadataRequestCount);
+            return WaitForMetadataAsync(cancellationToken);
+        }
+
+        private async Task<HttpResponseMessage> WaitForMetadataAsync(CancellationToken cancellationToken)
+        {
+            await _releaseMetadata.Task.WaitAsync(cancellationToken);
+            return JsonResponse("""{"label":"Sensor"}""");
+        }
+
+        private static HttpResponseMessage JsonResponse(string json) =>
+            new(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            };
     }
 }

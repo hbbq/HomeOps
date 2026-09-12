@@ -28,19 +28,31 @@ public sealed class SmartThingsMeasurementSource(
 
     public async Task<IReadOnlyCollection<MeasurementSample>> ReadAsync(CancellationToken cancellationToken)
     {
-        var samples = new List<MeasurementSample>();
         var httpClient = httpClientFactory.CreateClient("SmartThings");
+        var deviceIds = _options.DeviceIds
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var maxConcurrency = Math.Clamp(_options.MaxConcurrentDeviceReads, 1, 16);
+        using var concurrency = new SemaphoreSlim(maxConcurrency, maxConcurrency);
 
-        foreach (var deviceId in _options.DeviceIds
-                     .Where(x => !string.IsNullOrWhiteSpace(x))
-                     .Select(x => x.Trim())
-                     .Distinct(StringComparer.Ordinal))
+        var deviceReads = deviceIds.Select(ReadDeviceAsync).ToArray();
+        var samples = await Task.WhenAll(deviceReads);
+        return samples.SelectMany(x => x).ToArray();
+
+        async Task<IReadOnlyCollection<MeasurementSample>> ReadDeviceAsync(string deviceId)
         {
+            await concurrency.WaitAsync(cancellationToken);
             try
             {
-                var deviceName = await GetDeviceNameAsync(httpClient, deviceId, cancellationToken);
-                using var status = await GetJsonAsync(httpClient, $"devices/{Uri.EscapeDataString(deviceId)}/status", cancellationToken);
-                samples.AddRange(MapStatus(deviceId, deviceName, status.RootElement, DateTimeOffset.UtcNow));
+                var escapedDeviceId = Uri.EscapeDataString(deviceId);
+                var deviceNameTask = GetDeviceNameAsync(httpClient, deviceId, cancellationToken);
+                var statusTask = GetJsonAsync(httpClient, $"devices/{escapedDeviceId}/status", cancellationToken);
+                await Task.WhenAll(deviceNameTask, statusTask);
+
+                using var status = await statusTask;
+                return MapStatus(deviceId, await deviceNameTask, status.RootElement, DateTimeOffset.UtcNow);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -49,10 +61,13 @@ public sealed class SmartThingsMeasurementSource(
             catch (Exception exception)
             {
                 logger.LogWarning(exception, "Could not read SmartThings device {DeviceId}; continuing with other devices", deviceId);
+                return [];
+            }
+            finally
+            {
+                concurrency.Release();
             }
         }
-
-        return samples;
     }
 
     internal static IReadOnlyCollection<MeasurementSample> MapStatus(

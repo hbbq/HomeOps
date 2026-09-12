@@ -13,6 +13,10 @@ public sealed class MeasurementIngestionService(
     private readonly IReadOnlyCollection<IMeasurementSource> _sources = sources.ToArray();
     private readonly TimeSpan _interval = TimeSpan.FromSeconds(
         Math.Max(1, options.Value.IntervalSeconds));
+    private readonly int _maxConcurrentSourceReads = Math.Clamp(
+        options.Value.MaxConcurrentSourceReads,
+        1,
+        16);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -20,7 +24,11 @@ public sealed class MeasurementIngestionService(
         {
             try
             {
-                var samples = await ReadSourcesAsync(_sources, logger, stoppingToken);
+                var samples = await ReadSourcesAsync(
+                    _sources,
+                    logger,
+                    stoppingToken,
+                    _maxConcurrentSourceReads);
                 var storedCount = await PersistAsync(samples, stoppingToken);
                 logger.LogInformation(
                     "Stored {MeasurementCount} changed measurements from {SourceCount} sources",
@@ -43,14 +51,21 @@ public sealed class MeasurementIngestionService(
     internal static async Task<IReadOnlyCollection<MeasurementSample>> ReadSourcesAsync(
         IEnumerable<IMeasurementSource> sources,
         ILogger logger,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int maxConcurrency = 4)
     {
-        var samples = new List<MeasurementSample>();
-        foreach (var source in sources)
+        maxConcurrency = Math.Clamp(maxConcurrency, 1, 16);
+        using var concurrency = new SemaphoreSlim(maxConcurrency, maxConcurrency);
+        var sourceReads = sources.Select(ReadSourceAsync).ToArray();
+        var samples = await Task.WhenAll(sourceReads);
+        return samples.SelectMany(x => x).ToArray();
+
+        async Task<IReadOnlyCollection<MeasurementSample>> ReadSourceAsync(IMeasurementSource source)
         {
+            await concurrency.WaitAsync(cancellationToken);
             try
             {
-                samples.AddRange(await source.ReadAsync(cancellationToken));
+                return await source.ReadAsync(cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -62,10 +77,13 @@ public sealed class MeasurementIngestionService(
                     exception,
                     "Measurement acquisition from {MeasurementSource} failed",
                     source.GetType().Name);
+                return [];
+            }
+            finally
+            {
+                concurrency.Release();
             }
         }
-
-        return samples;
     }
 
     private async Task<int> PersistAsync(
