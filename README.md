@@ -1,6 +1,6 @@
 # HomeOps
 
-HomeOps v1 is a small ASP.NET Core service that collects home measurements, stores their history in SQL Server, and exposes read-only HTTP endpoints. It includes a simulator and an optional SmartThings polling source; both can run at the same time.
+HomeOps v1 is a small ASP.NET Core service that collects home measurements, stores their history in SQL Server, and exposes read-only HTTP endpoints. It includes a simulator plus optional SmartThings and SMHI weather polling sources, which can run at the same time.
 
 ## Configuration
 
@@ -12,7 +12,7 @@ $env:ConnectionStrings__HomeOps = "Server=localhost;Database=HomeOps;User Id=sa;
 
 The SQL login must be able to create or update the configured database. The service applies its checked-in Entity Framework Core migrations during startup. It stops with an error if the connection string is missing or SQL Server cannot be reached.
 
-All enabled sources run immediately after startup and every 30 seconds thereafter. Override the shared interval with `Acquisition__IntervalSeconds`; values below one second are treated as one second. Source polling is concurrent, with `Acquisition__MaxConcurrentSourceReads` controlling the limit (default 4, clamped to 1-16). The simulator is enabled by default and records temperature, humidity, and a 0/1 occupied state for one living-room device. Disable it with `Simulator__Enabled=false`.
+All enabled sources run immediately after startup. Sources without their own interval use `Acquisition__IntervalSeconds` (default 30 seconds; values below one second are treated as one second). Source polling is concurrent, with `Acquisition__MaxConcurrentSourceReads` controlling the limit (default 4, clamped to 1-16). The simulator is enabled by default and records temperature, humidity, and a 0/1 occupied state for one living-room device. Disable it with `Simulator__Enabled=false`.
 
 ### SmartThings
 
@@ -37,7 +37,25 @@ Each selected device is queried through the SmartThings device and full-status e
 
 Point keys have the form `component/capability/attribute`, so the same capability on different device components remains distinct. Attribute timestamps and units are preserved when present; collection time is used when the timestamp is absent or invalid. Non-numeric values and unlisted capabilities are ignored.
 
-HomeOps stores a new history row only when a point's numeric value differs from its latest stored value. This applies to every source and avoids repeated unchanged SmartThings observations.
+By default, HomeOps stores a new history row only when a point's numeric value differs from its latest stored value. This avoids repeated unchanged simulator and SmartThings observations. Sources whose observations have provider timestamps can opt into the timestamp-based history semantics described below for SMHI.
+
+### SMHI weather observations
+
+The SMHI source is disabled by default and retrieves actual observations for one explicitly configured Swedish meteorological station. Choose a station that exposes the measurements you need, then enable it with its numeric SMHI station identifier:
+
+```powershell
+$env:SmhiWeather__Enabled = "true"
+$env:SmhiWeather__StationId = "<station-id>"
+$env:SmhiWeather__StationName = "<display-name>" # optional
+```
+
+No API key is required. HomeOps requests the latest-hour observation for outdoor temperature (SMHI parameter 1), relative humidity (6), sea-level air pressure (9), and wind speed (4). A measurement that the selected station does not expose, or whose response has no numeric observation, is omitted. Values use canonical units `°C`, `%`, `hPa`, and `m/s`, and retain the provider's observation timestamp.
+
+SMHI weather polling defaults to every 15 minutes, independently of the simulator and other sources. Override it with `SmhiWeather__PollingIntervalMinutes`; the HTTP timeout is controlled by `SmhiWeather__TimeoutSeconds` (default 15). `SmhiWeather__BaseUrl` is also configurable for testing or compatible mirrors. Interval and timeout values must be greater than zero.
+
+The persisted source is `smhi`, and the configured station ID is its stable device identity; changing the optional display name does not create a new device. Weather history stores each distinct provider timestamp even when its value is unchanged, while repeated polls of the same timestamp are ignored.
+
+SMHI open data is provided under Creative Commons Attribution 4.0 terms. Review the current [SMHI open-data conditions](https://www.smhi.se/data/om-smhis-data/villkor-for-anvandning) when redistributing the data.
 
 ## Run locally
 
