@@ -18,6 +18,7 @@ builder.Services.AddDbContextFactory<HomeOpsDbContext>(options =>
 builder.Services.Configure<AcquisitionOptions>(builder.Configuration.GetSection("Acquisition"));
 builder.Services.Configure<SimulatorOptions>(builder.Configuration.GetSection("Simulator"));
 builder.Services.Configure<SmartThingsOptions>(builder.Configuration.GetSection("SmartThings"));
+builder.Services.Configure<SmhiWeatherOptions>(builder.Configuration.GetSection("SmhiWeather"));
 
 if (builder.Configuration.GetValue("Simulator:Enabled", true))
 {
@@ -51,6 +52,39 @@ if (builder.Configuration.GetValue("SmartThings:Enabled", false))
         client.Timeout = TimeSpan.FromSeconds(Math.Max(1, options.TimeoutSeconds));
     });
     builder.Services.AddSingleton<IMeasurementSource, SmartThingsMeasurementSource>();
+}
+
+if (builder.Configuration.GetValue("SmhiWeather:Enabled", false))
+{
+    var stationId = builder.Configuration["SmhiWeather:StationId"];
+    var configuredBaseUrl = builder.Configuration["SmhiWeather:BaseUrl"];
+    var pollingIntervalMinutes = builder.Configuration.GetValue("SmhiWeather:PollingIntervalMinutes", 15);
+    var timeoutSeconds = builder.Configuration.GetValue("SmhiWeather:TimeoutSeconds", 15);
+    if (string.IsNullOrWhiteSpace(stationId))
+    {
+        throw new InvalidOperationException("SmhiWeather:StationId is required when SMHI weather is enabled.");
+    }
+
+    if (pollingIntervalMinutes <= 0 || timeoutSeconds <= 0)
+    {
+        throw new InvalidOperationException(
+            "SmhiWeather:PollingIntervalMinutes and SmhiWeather:TimeoutSeconds must be greater than zero.");
+    }
+
+    if (!Uri.TryCreate(configuredBaseUrl, UriKind.Absolute, out var smhiBaseUri) ||
+        (smhiBaseUri.Scheme != Uri.UriSchemeHttps && smhiBaseUri.Scheme != Uri.UriSchemeHttp))
+    {
+        throw new InvalidOperationException("SmhiWeather:BaseUrl must be an absolute HTTP or HTTPS URL.");
+    }
+
+    builder.Services.AddHttpClient("SmhiWeather", (serviceProvider, client) =>
+    {
+        var options = serviceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<SmhiWeatherOptions>>().Value;
+        var baseUrl = options.BaseUrl.EndsWith('/') ? options.BaseUrl : $"{options.BaseUrl}/";
+        client.BaseAddress = new Uri(baseUrl, UriKind.Absolute);
+        client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+    });
+    builder.Services.AddSingleton<IMeasurementSource, SmhiWeatherMeasurementSource>();
 }
 
 builder.Services.AddHostedService<MeasurementIngestionService>();

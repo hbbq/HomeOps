@@ -9,4 +9,5 @@ public sealed record MeasurementSample(
     string Kind,
     string? Unit,
     decimal Value,
-    DateTimeOffset Timestamp);
+    DateTimeOffset Timestamp,
+    bool StoreForEachTimestamp = false);
