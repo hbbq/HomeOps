@@ -28,20 +28,11 @@ if (builder.Configuration.GetValue("Simulator:Enabled", true))
 if (builder.Configuration.GetValue("SmartThings:Enabled", false))
 {
     var smartThingsToken = builder.Configuration["SmartThings:Token"];
-    var smartThingsDeviceIds = builder.Configuration
-        .GetSection("SmartThings:DeviceIds")
-        .Get<string[]>() ?? [];
 
     if (string.IsNullOrWhiteSpace(smartThingsToken))
     {
         throw new InvalidOperationException(
             "SmartThings:Token is required when SmartThings is enabled. Supply it through user secrets or an environment variable.");
-    }
-
-    if (smartThingsDeviceIds.All(string.IsNullOrWhiteSpace))
-    {
-        throw new InvalidOperationException(
-            "At least one SmartThings:DeviceIds entry is required when SmartThings is enabled.");
     }
 
     builder.Services.AddHttpClient("SmartThings", (serviceProvider, client) =>

@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text.Json;
@@ -24,35 +23,26 @@ public sealed class SmartThingsMeasurementSource(
         };
 
     private readonly SmartThingsOptions _options = options.Value;
-    private readonly ConcurrentDictionary<string, string> _deviceNames = new(StringComparer.Ordinal);
 
     public async Task<IReadOnlyCollection<MeasurementSample>> ReadAsync(CancellationToken cancellationToken)
     {
         var httpClient = httpClientFactory.CreateClient("SmartThings");
-        var deviceIds = _options.DeviceIds
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Select(x => x.Trim())
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
+        var devices = await GetDevicesAsync(httpClient, cancellationToken);
         var maxConcurrency = Math.Clamp(_options.MaxConcurrentDeviceReads, 1, 16);
         using var concurrency = new SemaphoreSlim(maxConcurrency, maxConcurrency);
 
-        var deviceReads = deviceIds.Select(ReadDeviceAsync).ToArray();
+        var deviceReads = devices.Select(ReadDeviceAsync).ToArray();
         var samples = await Task.WhenAll(deviceReads);
         return samples.SelectMany(x => x).ToArray();
 
-        async Task<IReadOnlyCollection<MeasurementSample>> ReadDeviceAsync(string deviceId)
+        async Task<IReadOnlyCollection<MeasurementSample>> ReadDeviceAsync(SmartThingsDevice device)
         {
             await concurrency.WaitAsync(cancellationToken);
             try
             {
-                var escapedDeviceId = Uri.EscapeDataString(deviceId);
-                var deviceNameTask = GetDeviceNameAsync(httpClient, deviceId, cancellationToken);
-                var statusTask = GetJsonAsync(httpClient, $"devices/{escapedDeviceId}/status", cancellationToken);
-                await Task.WhenAll(deviceNameTask, statusTask);
-
-                using var status = await statusTask;
-                return MapStatus(deviceId, await deviceNameTask, status.RootElement, DateTimeOffset.UtcNow);
+                var escapedDeviceId = Uri.EscapeDataString(device.Id);
+                using var status = await GetJsonAsync(httpClient, $"devices/{escapedDeviceId}/status", cancellationToken);
+                return MapStatus(device.Id, device.Name, status.RootElement, DateTimeOffset.UtcNow);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -60,7 +50,7 @@ public sealed class SmartThingsMeasurementSource(
             }
             catch (Exception exception)
             {
-                logger.LogWarning(exception, "Could not read SmartThings device {DeviceId}; continuing with other devices", deviceId);
+                logger.LogWarning(exception, "Could not read SmartThings device {DeviceId}; continuing with other devices", device.Id);
                 return [];
             }
             finally
@@ -68,6 +58,45 @@ public sealed class SmartThingsMeasurementSource(
                 concurrency.Release();
             }
         }
+    }
+
+    private async Task<IReadOnlyCollection<SmartThingsDevice>> GetDevicesAsync(
+        HttpClient httpClient,
+        CancellationToken cancellationToken)
+    {
+        var devices = new Dictionary<string, SmartThingsDevice>(StringComparer.Ordinal);
+        var visitedPages = new HashSet<Uri>();
+        Uri? pageUri = new("devices", UriKind.Relative);
+
+        while (pageUri is not null)
+        {
+            var absolutePageUri = new Uri(httpClient.BaseAddress!, pageUri);
+            if (!visitedPages.Add(absolutePageUri))
+            {
+                throw new InvalidOperationException("SmartThings device pagination returned a repeated page URL.");
+            }
+
+            using var page = await GetJsonAsync(httpClient, pageUri, cancellationToken);
+            var root = page.RootElement;
+            if (root.TryGetProperty("items", out var items) && items.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in items.EnumerateArray())
+                {
+                    var deviceId = GetNonEmptyString(item, "deviceId");
+                    if (deviceId is null)
+                    {
+                        continue;
+                    }
+
+                    var name = GetNonEmptyString(item, "label") ?? GetNonEmptyString(item, "name") ?? deviceId;
+                    devices.TryAdd(deviceId, new SmartThingsDevice(deviceId, name));
+                }
+            }
+
+            pageUri = GetNextPageUri(httpClient.BaseAddress, root);
+        }
+
+        return devices.Values.ToArray();
     }
 
     internal static IReadOnlyCollection<MeasurementSample> MapStatus(
@@ -146,38 +175,9 @@ public sealed class SmartThingsMeasurementSource(
         return samples;
     }
 
-    private async Task<string> GetDeviceNameAsync(
-        HttpClient httpClient,
-        string deviceId,
-        CancellationToken cancellationToken)
-    {
-        if (_deviceNames.TryGetValue(deviceId, out var cachedName))
-        {
-            return cachedName;
-        }
-
-        try
-        {
-            using var device = await GetJsonAsync(httpClient, $"devices/{Uri.EscapeDataString(deviceId)}", cancellationToken);
-            var root = device.RootElement;
-            var name = GetNonEmptyString(root, "label") ?? GetNonEmptyString(root, "name") ?? deviceId;
-            _deviceNames.TryAdd(deviceId, name);
-            return name;
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception exception)
-        {
-            logger.LogWarning(exception, "Could not read the name of SmartThings device {DeviceId}; using its ID", deviceId);
-            return deviceId;
-        }
-    }
-
     private async Task<JsonDocument> GetJsonAsync(
         HttpClient httpClient,
-        string requestUri,
+        Uri requestUri,
         CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
@@ -188,6 +188,35 @@ public sealed class SmartThingsMeasurementSource(
         return await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
     }
 
+    private Task<JsonDocument> GetJsonAsync(
+        HttpClient httpClient,
+        string requestUri,
+        CancellationToken cancellationToken) =>
+        GetJsonAsync(httpClient, new Uri(requestUri, UriKind.Relative), cancellationToken);
+
+    private static Uri? GetNextPageUri(Uri? baseAddress, JsonElement root)
+    {
+        if (baseAddress is null ||
+            !root.TryGetProperty("_links", out var links) ||
+            links.ValueKind != JsonValueKind.Object ||
+            !links.TryGetProperty("next", out var next) ||
+            next.ValueKind != JsonValueKind.Object ||
+            GetNonEmptyString(next, "href") is not { } href)
+        {
+            return null;
+        }
+
+        var nextUri = new Uri(baseAddress, href);
+        if (!string.Equals(nextUri.Scheme, baseAddress.Scheme, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(nextUri.Host, baseAddress.Host, StringComparison.OrdinalIgnoreCase) ||
+            nextUri.Port != baseAddress.Port)
+        {
+            throw new InvalidOperationException("SmartThings device pagination returned a URL outside the configured API origin.");
+        }
+
+        return nextUri;
+    }
+
     private static string? GetNonEmptyString(JsonElement element, string propertyName) =>
         element.TryGetProperty(propertyName, out var property) &&
         property.ValueKind == JsonValueKind.String &&
@@ -196,4 +225,5 @@ public sealed class SmartThingsMeasurementSource(
             : null;
 
     private sealed record MeasurementDefinition(string Name, string Kind);
+    private sealed record SmartThingsDevice(string Id, string Name);
 }

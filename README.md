@@ -16,18 +16,16 @@ All enabled sources run immediately after startup. Sources without their own int
 
 ### SmartThings
 
-SmartThings is disabled by default. The initial integration uses polling, a bearer/PAT token, and an explicit device-ID allowlist. It does not implement OAuth refresh, automatic discovery, or webhooks. Configure a token outside source control and add one or more device IDs:
+SmartThings uses polling and a bearer/PAT token. It automatically discovers all devices the token can access across its authorized locations; device IDs do not need to be configured. It does not implement OAuth refresh or webhooks. Configure the token outside source control:
 
 ```powershell
 dotnet user-secrets set --project src/HomeOps.Api "SmartThings:Token" "<token>"
 $env:SmartThings__Enabled = "true"
-$env:SmartThings__DeviceIds__0 = "<device-id>"
-$env:SmartThings__DeviceIds__1 = "<another-device-id>"
 ```
 
 For deployments, supply the same keys through environment or secret configuration. Never put the token in `appsettings.json` or an image layer. Optional settings are `SmartThings__BaseUrl` (default `https://api.smartthings.com/v1/`), `SmartThings__TimeoutSeconds` (default 15), and `SmartThings__MaxConcurrentDeviceReads` (default 4, clamped to 1-16).
 
-Each selected device is queried through the SmartThings device and full-status endpoints. HomeOps ingests only numeric values for these capability attributes:
+On every poll, HomeOps follows the SmartThings device-list pagination and then queries every discovered device through its full-status endpoint. This picks up devices added to or removed from an authorized location without a configuration change. HomeOps ingests only numeric values for these capability attributes:
 
 - `temperatureMeasurement/temperature`
 - `relativeHumidityMeasurement/humidity`

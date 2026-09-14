@@ -49,28 +49,29 @@ public sealed class SmartThingsMeasurementSourceTests
     }
 
     [Fact]
-    public async Task ReadAsync_UsesBearerTokenAllowlistAndContinuesAfterDeviceFailure()
+    public async Task ReadAsync_DiscoversPaginatedDevicesAndContinuesAfterDeviceFailure()
     {
         var handler = new StubHandler(request =>
         {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/devices", StringComparison.Ordinal))
+            {
+                var json = request.RequestUri.Query.Contains("page=2", StringComparison.Ordinal)
+                    ? """{"items":[{"deviceId":"good","label":"Kitchen sensor"},{"deviceId":"good","label":"Duplicate"}],"_links":{}}"""
+                    : """{"items":[{"deviceId":"bad","label":"Unavailable sensor"}],"_links":{"next":{"href":"https://api.smartthings.com/v1/devices?page=2"}}}""";
+                return JsonResponse(json);
+            }
+
             if (request.RequestUri!.AbsolutePath.EndsWith("/devices/bad/status", StringComparison.Ordinal))
             {
                 return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
             }
 
-            var json = request.RequestUri.AbsolutePath.EndsWith("/status", StringComparison.Ordinal)
-                ? """{"components":{"main":{"battery":{"battery":{"value":90,"unit":"%"}}}}}"""
-                : """{"label":"Kitchen sensor"}""";
-            return new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(json, Encoding.UTF8, "application/json")
-            };
+            return JsonResponse("""{"components":{"main":{"battery":{"battery":{"value":90,"unit":"%"}}}}}""");
         });
         var client = new HttpClient(handler) { BaseAddress = new Uri("https://api.smartthings.com/v1/") };
         var options = Options.Create(new SmartThingsOptions
         {
-            Token = "secret-token",
-            DeviceIds = ["bad", "good", "good"]
+            Token = "secret-token"
         });
         var source = new SmartThingsMeasurementSource(
             new StubHttpClientFactory(client),
@@ -93,12 +94,11 @@ public sealed class SmartThingsMeasurementSourceTests
     [Fact]
     public async Task ReadAsync_ReadsDevicesWithBoundedConcurrencyAndOverlapsDeviceRequests()
     {
-        var handler = new GatedMetadataHandler();
+        var handler = new GatedStatusHandler();
         var client = new HttpClient(handler) { BaseAddress = new Uri("https://api.smartthings.com/v1/") };
         var options = Options.Create(new SmartThingsOptions
         {
             Token = "secret-token",
-            DeviceIds = ["one", "two", "three"],
             MaxConcurrentDeviceReads = 2
         });
         var source = new SmartThingsMeasurementSource(
@@ -108,14 +108,12 @@ public sealed class SmartThingsMeasurementSourceTests
 
         var readTask = source.ReadAsync(CancellationToken.None);
 
-        Assert.Equal(2, handler.MetadataRequestCount);
         Assert.Equal(2, handler.StatusRequestCount);
 
-        handler.ReleaseMetadata();
+        handler.ReleaseStatuses();
         var samples = await readTask;
 
         Assert.Equal(3, samples.Count);
-        Assert.Equal(3, handler.MetadataRequestCount);
         Assert.Equal(3, handler.StatusRequestCount);
     }
 
@@ -130,47 +128,44 @@ public sealed class SmartThingsMeasurementSourceTests
         }
     }
 
+    private static HttpResponseMessage JsonResponse(string json) =>
+        new(HttpStatusCode.OK)
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json")
+        };
+
     private sealed class StubHttpClientFactory(HttpClient client) : IHttpClientFactory
     {
         public HttpClient CreateClient(string name) => client;
     }
 
-    private sealed class GatedMetadataHandler : HttpMessageHandler
+    private sealed class GatedStatusHandler : HttpMessageHandler
     {
-        private readonly TaskCompletionSource _releaseMetadata = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private int _metadataRequestCount;
+        private readonly TaskCompletionSource _releaseStatuses = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _statusRequestCount;
 
-        public int MetadataRequestCount => Volatile.Read(ref _metadataRequestCount);
         public int StatusRequestCount => Volatile.Read(ref _statusRequestCount);
 
-        public void ReleaseMetadata() => _releaseMetadata.SetResult();
+        public void ReleaseStatuses() => _releaseStatuses.SetResult();
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
-            if (request.RequestUri!.AbsolutePath.EndsWith("/status", StringComparison.Ordinal))
+            if (request.RequestUri!.AbsolutePath.EndsWith("/devices", StringComparison.Ordinal))
             {
-                Interlocked.Increment(ref _statusRequestCount);
                 return Task.FromResult(JsonResponse(
-                    """{"components":{"main":{"battery":{"battery":{"value":90,"unit":"%"}}}}}"""));
+                    """{"items":[{"deviceId":"one","label":"One"},{"deviceId":"two","label":"Two"},{"deviceId":"three","label":"Three"}],"_links":{}}"""));
             }
 
-            Interlocked.Increment(ref _metadataRequestCount);
-            return WaitForMetadataAsync(cancellationToken);
+            Interlocked.Increment(ref _statusRequestCount);
+            return WaitForStatusAsync(cancellationToken);
         }
 
-        private async Task<HttpResponseMessage> WaitForMetadataAsync(CancellationToken cancellationToken)
+        private async Task<HttpResponseMessage> WaitForStatusAsync(CancellationToken cancellationToken)
         {
-            await _releaseMetadata.Task.WaitAsync(cancellationToken);
-            return JsonResponse("""{"label":"Sensor"}""");
+            await _releaseStatuses.Task.WaitAsync(cancellationToken);
+            return JsonResponse("""{"components":{"main":{"battery":{"battery":{"value":90,"unit":"%"}}}}}""");
         }
-
-        private static HttpResponseMessage JsonResponse(string json) =>
-            new(HttpStatusCode.OK)
-            {
-                Content = new StringContent(json, Encoding.UTF8, "application/json")
-            };
     }
 }
