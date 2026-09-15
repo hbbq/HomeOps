@@ -21,6 +21,7 @@ partial class HomeOpsDbContextModelSnapshot : ModelSnapshot
         {
             entity.Property<int>("Id").ValueGeneratedOnAdd().HasColumnType("int");
             SqlServerPropertyBuilderExtensions.UseIdentityColumn(entity.Property<int>("Id"));
+            entity.Property<bool>("IsEnabled").ValueGeneratedOnAdd().HasColumnType("bit").HasDefaultValue(true);
             entity.Property<string>("Name").IsRequired().HasMaxLength(200).HasColumnType("nvarchar(200)");
             entity.Property<string>("Source").IsRequired().HasMaxLength(100).HasColumnType("nvarchar(100)");
             entity.Property<string>("SourceDeviceId").IsRequired().HasMaxLength(200).HasColumnType("nvarchar(200)");

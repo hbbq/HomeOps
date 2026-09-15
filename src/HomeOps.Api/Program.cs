@@ -86,7 +86,7 @@ builder.Services.AddSwaggerGen(options =>
     {
         Title = "HomeOps API",
         Version = "v1",
-        Description = "Read-only access to HomeOps devices and measurements."
+        Description = "Access to HomeOps devices, measurements, and dashboard device management."
     });
 });
 

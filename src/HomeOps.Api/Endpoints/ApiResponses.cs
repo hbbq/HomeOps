@@ -9,6 +9,17 @@ public sealed class DeviceResponse
     public IEnumerable<MeasurementPointResponse> MeasurementPoints { get; init; } = [];
 }
 
+public sealed class DashboardDeviceResponse
+{
+    public int Id { get; init; }
+    public required string Source { get; init; }
+    public required string SourceDeviceId { get; init; }
+    public required string Name { get; init; }
+    public bool IsEnabled { get; init; }
+}
+
+public sealed record SetDeviceEnabledRequest(bool Enabled);
+
 public sealed class MeasurementPointResponse
 {
     public int Id { get; init; }

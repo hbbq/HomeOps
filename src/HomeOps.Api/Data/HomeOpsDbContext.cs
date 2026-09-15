@@ -12,6 +12,7 @@ public sealed class HomeOpsDbContext(DbContextOptions<HomeOpsDbContext> options)
     {
         modelBuilder.Entity<Device>(entity =>
         {
+            entity.Property(x => x.IsEnabled).HasDefaultValue(true);
             entity.Property(x => x.Source).HasMaxLength(100);
             entity.Property(x => x.SourceDeviceId).HasMaxLength(200);
             entity.Property(x => x.Name).HasMaxLength(200);

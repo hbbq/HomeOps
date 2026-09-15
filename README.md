@@ -67,7 +67,7 @@ dotnet run --project src/HomeOps.Api
 
 The address is printed by ASP.NET Core at startup. To select one explicitly, set `ASPNETCORE_URLS`, for example `http://localhost:8080`.
 
-Open `/dashboard/` on that address (for example, `http://localhost:8080/dashboard/`) to view the latest measurements grouped by device. The dashboard refreshes every 30 seconds and displays timestamps in the browser's local timezone. It shows only measurement points that have at least one recorded value.
+Open `/dashboard/` on that address (for example, `http://localhost:8080/dashboard/`) to view the latest measurements grouped by device. The dashboard refreshes every 30 seconds and displays timestamps in the browser's local timezone. It shows only measurement points that have at least one recorded value. Devices can be disabled and re-enabled from the dashboard; disabled devices remain visible there but are hidden from the public device and measurement endpoints.
 When running in the `Development` environment, interactive Swagger UI is available at `/swagger` and the OpenAPI document at `/swagger/v1/swagger.json`. These endpoints are not exposed in other environments.
 
 ## Run as a container
@@ -91,6 +91,8 @@ For a remote SQL Server, replace the server and credentials as appropriate. Keep
 - `GET /api/devices` lists known devices and their measurement points.
 - `GET /api/measurements/latest` returns the latest stored value for every known point that has recorded data.
 - `GET /api/measurement-points/{pointId}/history` returns newest-first history for one point.
+
+Disabled devices are omitted from the device and latest-measurement lists, and their measurement-point history returns `404 Not Found`. Existing endpoint URLs and response shapes are unchanged.
 
 History accepts optional ISO 8601 `from` and `to` timestamps and a `limit`. The default limit is 500 and the maximum is 5,000. For example:
 

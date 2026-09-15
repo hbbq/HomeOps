@@ -13,6 +13,15 @@ public static class HomeOpsEndpoints
             .WithName("GetDevices")
             .WithSummary("List devices and their measurement points")
             .Produces<List<DeviceResponse>>();
+        api.MapGet("/dashboard/devices", GetDashboardDevicesAsync)
+            .WithName("GetDashboardDevices")
+            .WithSummary("List all devices for dashboard management")
+            .Produces<List<DashboardDeviceResponse>>();
+        api.MapPut("/dashboard/devices/{deviceId:int}/enabled", SetDeviceEnabledAsync)
+            .WithName("SetDeviceEnabled")
+            .WithSummary("Enable or disable a device from the dashboard")
+            .Produces(StatusCodes.Status204NoContent)
+            .Produces(StatusCodes.Status404NotFound);
         api.MapGet("/measurements/latest", GetLatestMeasurementsAsync)
             .WithName("GetLatestMeasurements")
             .WithSummary("Get the latest measurement for every known point")
@@ -34,6 +43,7 @@ public static class HomeOpsEndpoints
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         var devices = await db.Devices
             .AsNoTracking()
+            .Where(x => x.IsEnabled)
             .OrderBy(x => x.Name)
             .Select(x => new DeviceResponse
             {
@@ -55,6 +65,45 @@ public static class HomeOpsEndpoints
         return Results.Ok(devices);
     }
 
+    private static async Task<IResult> GetDashboardDevicesAsync(
+        IDbContextFactory<HomeOpsDbContext> dbContextFactory,
+        CancellationToken cancellationToken)
+    {
+        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var devices = await db.Devices
+            .AsNoTracking()
+            .OrderBy(x => x.Name)
+            .Select(x => new DashboardDeviceResponse
+            {
+                Id = x.Id,
+                Source = x.Source,
+                SourceDeviceId = x.SourceDeviceId,
+                Name = x.Name,
+                IsEnabled = x.IsEnabled
+            })
+            .ToListAsync(cancellationToken);
+
+        return Results.Ok(devices);
+    }
+
+    private static async Task<IResult> SetDeviceEnabledAsync(
+        int deviceId,
+        SetDeviceEnabledRequest request,
+        IDbContextFactory<HomeOpsDbContext> dbContextFactory,
+        CancellationToken cancellationToken)
+    {
+        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var device = await db.Devices.SingleOrDefaultAsync(x => x.Id == deviceId, cancellationToken);
+        if (device is null)
+        {
+            return Results.NotFound();
+        }
+
+        device.IsEnabled = request.Enabled;
+        await db.SaveChangesAsync(cancellationToken);
+        return Results.NoContent();
+    }
+
     private static async Task<IResult> GetLatestMeasurementsAsync(
         IDbContextFactory<HomeOpsDbContext> dbContextFactory,
         CancellationToken cancellationToken)
@@ -62,7 +111,7 @@ public static class HomeOpsEndpoints
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         var latest = await db.MeasurementPoints
             .AsNoTracking()
-            .Where(point => point.Measurements.Any())
+            .Where(point => point.Device.IsEnabled && point.Measurements.Any())
             .OrderBy(point => point.Device.Name)
             .ThenBy(point => point.Name)
             .Select(point => new LatestMeasurementResponse
@@ -107,7 +156,7 @@ public static class HomeOpsEndpoints
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         var point = await db.MeasurementPoints
             .AsNoTracking()
-            .Where(x => x.Id == pointId)
+            .Where(x => x.Id == pointId && x.Device.IsEnabled)
             .Select(x => new MeasurementPointDetailsResponse
             {
                 Id = x.Id,
