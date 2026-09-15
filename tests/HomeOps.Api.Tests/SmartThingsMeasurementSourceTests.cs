@@ -24,6 +24,8 @@ public sealed class SmartThingsMeasurementSourceTests
                     "humidity": { "value": 48, "unit": "%", "timestamp": "not-a-timestamp" }
                   },
                   "battery": { "battery": { "value": 87, "unit": "%" } },
+                  "motionSensor": { "motion": { "value": "active", "timestamp": "2026-09-11T12:35:00Z" } },
+                  "contactSensor": { "contact": { "value": "closed" } },
                   "switch": { "switch": { "value": "on" } }
                 },
                 "meter": {
@@ -38,7 +40,7 @@ public sealed class SmartThingsMeasurementSourceTests
 
         var samples = SmartThingsMeasurementSource.MapStatus("device-1", "Kitchen", status.RootElement, collectionTime);
 
-        Assert.Equal(5, samples.Count);
+        Assert.Equal(7, samples.Count);
         var temperature = Assert.Single(samples, x => x.PointKey == "main/temperatureMeasurement/temperature");
         Assert.Equal(21.25m, temperature.Value);
         Assert.Equal(DateTimeOffset.Parse("2026-09-11T12:34:56Z"), temperature.Timestamp);
@@ -46,6 +48,54 @@ public sealed class SmartThingsMeasurementSourceTests
         Assert.Equal(collectionTime, humidity.Timestamp);
         var power = Assert.Single(samples, x => x.PointKey == "meter/powerMeter/power");
         Assert.Equal("Power (meter)", power.PointName);
+        var motion = Assert.Single(samples, x => x.PointKey == "main/motionSensor/motion");
+        Assert.Equal("Motion", motion.PointName);
+        Assert.Equal("boolean", motion.Kind);
+        Assert.Null(motion.Unit);
+        Assert.Equal(1, motion.Value);
+        Assert.Equal(DateTimeOffset.Parse("2026-09-11T12:35:00Z"), motion.Timestamp);
+        var contact = Assert.Single(samples, x => x.PointKey == "main/contactSensor/contact");
+        Assert.Equal("Contact", contact.PointName);
+        Assert.Equal("boolean", contact.Kind);
+        Assert.Equal(0, contact.Value);
+    }
+
+    [Fact]
+    public void MapStatus_MapsInactiveMotionAndOpenContactAndIgnoresUnknownStates()
+    {
+        using var status = JsonDocument.Parse("""
+            {
+              "components": {
+                "main": {
+                  "motionSensor": { "motion": { "value": "inactive" } },
+                  "contactSensor": { "contact": { "value": "open" } }
+                },
+                "secondary": {
+                  "motionSensor": { "motion": { "value": "unknown" } },
+                  "contactSensor": { "contact": { "value": null } }
+                }
+              }
+            }
+            """);
+
+        var samples = SmartThingsMeasurementSource.MapStatus(
+            "device-1",
+            "Hallway",
+            status.RootElement,
+            DateTimeOffset.UtcNow);
+
+        Assert.Collection(
+            samples.OrderBy(x => x.PointKey),
+            contact =>
+            {
+                Assert.Equal("main/contactSensor/contact", contact.PointKey);
+                Assert.Equal(1, contact.Value);
+            },
+            motion =>
+            {
+                Assert.Equal("main/motionSensor/motion", motion.PointKey);
+                Assert.Equal(0, motion.Value);
+            });
     }
 
     [Fact]

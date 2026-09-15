@@ -19,7 +19,9 @@ public sealed class SmartThingsMeasurementSource(
             [("relativeHumidityMeasurement", "humidity")] = new("Relative humidity", "humidity"),
             [("battery", "battery")] = new("Battery", "battery"),
             [("powerMeter", "power")] = new("Power", "power"),
-            [("energyMeter", "energy")] = new("Energy", "energy")
+            [("energyMeter", "energy")] = new("Energy", "energy"),
+            [("motionSensor", "motion")] = new("Motion", "boolean", "active", "inactive"),
+            [("contactSensor", "contact")] = new("Contact", "boolean", "open", "closed")
         };
 
     private readonly SmartThingsOptions _options = options.Value;
@@ -130,8 +132,7 @@ public sealed class SmartThingsMeasurementSource(
                     if (!SupportedMeasurements.TryGetValue((capability.Name, attribute.Name), out var definition) ||
                         attribute.Value.ValueKind != JsonValueKind.Object ||
                         !attribute.Value.TryGetProperty("value", out var valueElement) ||
-                        valueElement.ValueKind != JsonValueKind.Number ||
-                        !valueElement.TryGetDecimal(out var value))
+                        !TryGetValue(definition, valueElement, out var value))
                     {
                         continue;
                     }
@@ -173,6 +174,37 @@ public sealed class SmartThingsMeasurementSource(
         }
 
         return samples;
+    }
+
+    private static bool TryGetValue(
+        MeasurementDefinition definition,
+        JsonElement valueElement,
+        out decimal value)
+    {
+        value = default;
+
+        if (definition.TrueValue is null)
+        {
+            return valueElement.ValueKind == JsonValueKind.Number && valueElement.TryGetDecimal(out value);
+        }
+
+        if (valueElement.ValueKind == JsonValueKind.String)
+        {
+            var stringValue = valueElement.GetString();
+            if (string.Equals(stringValue, definition.TrueValue, StringComparison.OrdinalIgnoreCase))
+            {
+                value = 1;
+                return true;
+            }
+
+            if (string.Equals(stringValue, definition.FalseValue, StringComparison.OrdinalIgnoreCase))
+            {
+                value = 0;
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private async Task<JsonDocument> GetJsonAsync(
@@ -224,6 +256,10 @@ public sealed class SmartThingsMeasurementSource(
             ? property.GetString()
             : null;
 
-    private sealed record MeasurementDefinition(string Name, string Kind);
+    private sealed record MeasurementDefinition(
+        string Name,
+        string Kind,
+        string? TrueValue = null,
+        string? FalseValue = null);
     private sealed record SmartThingsDevice(string Id, string Name);
 }

@@ -25,15 +25,17 @@ $env:SmartThings__Enabled = "true"
 
 For deployments, supply the same keys through environment or secret configuration. Never put the token in `appsettings.json` or an image layer. Optional settings are `SmartThings__BaseUrl` (default `https://api.smartthings.com/v1/`), `SmartThings__TimeoutSeconds` (default 15), and `SmartThings__MaxConcurrentDeviceReads` (default 4, clamped to 1-16).
 
-On every poll, HomeOps follows the SmartThings device-list pagination and then queries every discovered device through its full-status endpoint. This picks up devices added to or removed from an authorized location without a configuration change. HomeOps ingests only numeric values for these capability attributes:
+On every poll, HomeOps follows the SmartThings device-list pagination and then queries every discovered device through its full-status endpoint. This picks up devices added to or removed from an authorized location without a configuration change. HomeOps ingests numeric values and supported sensor states for these capability attributes:
 
 - `temperatureMeasurement/temperature`
 - `relativeHumidityMeasurement/humidity`
 - `battery/battery`
 - `powerMeter/power`
 - `energyMeter/energy`
+- `motionSensor/motion` (`active` = 1, `inactive` = 0)
+- `contactSensor/contact` (`open` = 1, `closed` = 0)
 
-Point keys have the form `component/capability/attribute`, so the same capability on different device components remains distinct. Attribute timestamps and units are preserved when present; collection time is used when the timestamp is absent or invalid. Non-numeric values and unlisted capabilities are ignored.
+Point keys have the form `component/capability/attribute`, so the same capability on different device components remains distinct. Attribute timestamps and units are preserved when present; collection time is used when the timestamp is absent or invalid. Motion and contact are exposed as boolean points without units. Other non-numeric values, unknown sensor states, and unlisted capabilities are ignored.
 
 By default, HomeOps stores a new history row only when a point's numeric value differs from its latest stored value. This avoids repeated unchanged simulator and SmartThings observations. Sources whose observations have provider timestamps can opt into the timestamp-based history semantics described below for SMHI.
 
