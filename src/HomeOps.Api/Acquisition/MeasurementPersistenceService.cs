@@ -105,6 +105,11 @@ public sealed class MeasurementPersistenceService(
                         db,
                         cancellationToken);
 
+                    if (previousExposed is not null && sample.Timestamp < previousExposed.Timestamp)
+                    {
+                        continue;
+                    }
+
                     if (SmartThingsStabilizationPolicy.IsMotion(sample))
                     {
                         scheduleChanged |= ApplyMotion(point, sample, previousExposed, observedAt, latestExposed);
