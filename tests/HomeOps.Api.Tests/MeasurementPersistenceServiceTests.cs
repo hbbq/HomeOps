@@ -29,23 +29,29 @@ public sealed class MeasurementPersistenceServiceTests
     }
 
     [Fact]
-    public async Task PersistAsync_OlderSmartThingsMotionActiveDoesNotReactivateOrCreateHold()
+    public async Task PersistAsync_ActiveMotionAfterExpiredHoldReactivatesDespiteUnchangedProviderTimestamp()
     {
         var fixture = new PersistenceFixture();
-        var currentInactive = fixture.Sample(
+        var active = fixture.Sample(
             "smartthings",
             "main/motionSensor/motion",
-            0m,
-            fixture.Timestamp.AddMinutes(2));
-        var olderActive = currentInactive with { Value = 1m, Timestamp = fixture.Timestamp.AddMinutes(1) };
+            1m,
+            fixture.Timestamp.AddHours(-1));
 
-        await fixture.Service.PersistAsync([currentInactive], CancellationToken.None);
-        await fixture.Service.PersistAsync([olderActive], CancellationToken.None);
+        await fixture.Service.PersistAsync([active], CancellationToken.None);
+        fixture.TimeProvider.Advance(TimeSpan.FromMinutes(2));
+        await fixture.Service.ExpireMotionHoldsAsync(CancellationToken.None);
+        fixture.TimeProvider.Advance(TimeSpan.FromSeconds(30));
+        await fixture.Service.PersistAsync([active], CancellationToken.None);
 
         await using var db = fixture.CreateDbContext();
-        Assert.Equal([0m, 1m], await db.Measurements.OrderBy(x => x.Id).Select(x => x.Value).ToListAsync());
-        Assert.Equal(0m, Assert.Single(await db.ExposedMeasurements.ToListAsync()).Value);
-        Assert.Empty(await db.MotionHolds.ToListAsync());
+        Assert.Single(await db.Measurements.ToListAsync());
+        var exposed = await db.ExposedMeasurements.OrderBy(x => x.Id).ToListAsync();
+        Assert.Equal([1m, 0m, 1m], exposed.Select(x => x.Value));
+        Assert.Equal(active.Timestamp, exposed[^1].Timestamp);
+        Assert.Equal(
+            fixture.TimeProvider.GetUtcNow().AddMinutes(2),
+            Assert.Single(await db.MotionHolds.ToListAsync()).DueAt);
     }
 
     [Fact]
@@ -60,9 +66,7 @@ public sealed class MeasurementPersistenceServiceTests
 
         await fixture.Service.PersistAsync([active], CancellationToken.None);
         fixture.TimeProvider.Advance(TimeSpan.FromSeconds(30));
-        await fixture.Service.PersistAsync(
-            [active with { Timestamp = active.Timestamp.AddSeconds(30) }],
-            CancellationToken.None);
+        await fixture.Service.PersistAsync([active], CancellationToken.None);
 
         await using var db = fixture.CreateDbContext();
         Assert.Single(await db.Measurements.ToListAsync());
@@ -72,24 +76,26 @@ public sealed class MeasurementPersistenceServiceTests
     }
 
     [Fact]
-    public async Task PersistAsync_OlderSmartThingsMotionActiveDoesNotResetExistingHold()
+    public async Task PersistAsync_SmartThingsTemperatureStillUsesDeadband()
     {
         var fixture = new PersistenceFixture();
-        var currentActive = fixture.Sample(
+        var initial = fixture.Sample(
             "smartthings",
-            "main/motionSensor/motion",
-            1m,
-            fixture.Timestamp.AddMinutes(2));
+            "main/temperatureMeasurement/temperature",
+            20m,
+            fixture.Timestamp) with { Unit = "C" };
 
-        await fixture.Service.PersistAsync([currentActive], CancellationToken.None);
-        var originalDueAt = fixture.TimeProvider.GetUtcNow().AddMinutes(2);
-        fixture.TimeProvider.Advance(TimeSpan.FromSeconds(30));
+        await fixture.Service.PersistAsync([initial], CancellationToken.None);
         await fixture.Service.PersistAsync(
-            [currentActive with { Timestamp = fixture.Timestamp.AddMinutes(1) }],
+            [initial with { Value = 20.2m, Timestamp = initial.Timestamp.AddMinutes(1) }],
+            CancellationToken.None);
+        await fixture.Service.PersistAsync(
+            [initial with { Value = 20.3m, Timestamp = initial.Timestamp.AddMinutes(2) }],
             CancellationToken.None);
 
         await using var db = fixture.CreateDbContext();
-        Assert.Equal(originalDueAt, Assert.Single(await db.MotionHolds.ToListAsync()).DueAt);
+        var exposed = await db.ExposedMeasurements.OrderBy(x => x.Id).ToListAsync();
+        Assert.Equal([20m, 20.3m], exposed.Select(x => x.Value));
     }
 
     [Fact]

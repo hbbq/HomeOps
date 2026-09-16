@@ -104,13 +104,18 @@ public sealed class MeasurementPersistenceService(
                         latestExposed,
                         db,
                         cancellationToken);
+                    var isSmartThingsMotion = SmartThingsStabilizationPolicy.IsMotion(sample);
 
-                    if (previousExposed is not null && sample.Timestamp < previousExposed.Timestamp)
+                    // Motion freshness is the local observation time used for its hold. Its provider
+                    // timestamp can remain older than a synthetic inactive publication timestamp.
+                    if (!isSmartThingsMotion &&
+                        previousExposed is not null &&
+                        sample.Timestamp < previousExposed.Timestamp)
                     {
                         continue;
                     }
 
-                    if (SmartThingsStabilizationPolicy.IsMotion(sample))
+                    if (isSmartThingsMotion)
                     {
                         scheduleChanged |= ApplyMotion(point, sample, previousExposed, observedAt, latestExposed);
                     }
