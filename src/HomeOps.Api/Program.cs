@@ -17,7 +17,11 @@ builder.Services.AddDbContextFactory<HomeOpsDbContext>(options =>
     options.UseSqlServer(connectionString, sql => sql.EnableRetryOnFailure()));
 builder.Services.Configure<AcquisitionOptions>(builder.Configuration.GetSection("Acquisition"));
 builder.Services.Configure<SimulatorOptions>(builder.Configuration.GetSection("Simulator"));
-builder.Services.Configure<SmartThingsOptions>(builder.Configuration.GetSection("SmartThings"));
+builder.Services.AddOptions<SmartThingsOptions>()
+    .Bind(builder.Configuration.GetSection("SmartThings"))
+    .Validate(x => x.MotionHoldSeconds > 0, "SmartThings:MotionHoldSeconds must be greater than zero.")
+    .Validate(x => x.TemperatureDeadbandCelsius > 0, "SmartThings:TemperatureDeadbandCelsius must be greater than zero.")
+    .ValidateOnStart();
 builder.Services.Configure<SmhiWeatherOptions>(builder.Configuration.GetSection("SmhiWeather"));
 
 if (builder.Configuration.GetValue("Simulator:Enabled", true))
@@ -78,7 +82,11 @@ if (builder.Configuration.GetValue("SmhiWeather:Enabled", false))
     builder.Services.AddSingleton<IMeasurementSource, SmhiWeatherMeasurementSource>();
 }
 
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<MotionHoldScheduleSignal>();
+builder.Services.AddSingleton<MeasurementPersistenceService>();
 builder.Services.AddHostedService<MeasurementIngestionService>();
+builder.Services.AddHostedService<MotionHoldExpirationService>();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {

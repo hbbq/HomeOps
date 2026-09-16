@@ -25,6 +25,8 @@ $env:SmartThings__Enabled = "true"
 
 For deployments, supply the same keys through environment or secret configuration. Never put the token in `appsettings.json` or an image layer. Optional settings are `SmartThings__BaseUrl` (default `https://api.smartthings.com/v1/`), `SmartThings__TimeoutSeconds` (default 15), and `SmartThings__MaxConcurrentDeviceReads` (default 4, clamped to 1-16).
 
+SmartThings motion and temperature are stabilized before they appear in `GET /api/measurements/latest`. Active motion is exposed immediately and remains active until HomeOps has observed no further active state for `SmartThings__MotionHoldSeconds` (default 120 seconds). Every active observation restarts the hold, and the eventual inactive value is published even if no poll occurs at expiry. Temperature changes smaller than `SmartThings__TemperatureDeadbandCelsius` (default 0.3 °C) relative to the last exposed value are suppressed; crossing the threshold publishes the new value and makes it the new baseline. Fahrenheit points use the equivalent converted threshold. Both settings must be greater than zero.
+
 On every poll, HomeOps follows the SmartThings device-list pagination and then queries every discovered device through its full-status endpoint. This picks up devices added to or removed from an authorized location without a configuration change. HomeOps ingests numeric values and supported sensor states for these capability attributes:
 
 - `temperatureMeasurement/temperature`
@@ -37,7 +39,7 @@ On every poll, HomeOps follows the SmartThings device-list pagination and then q
 
 Point keys have the form `component/capability/attribute`, so the same capability on different device components remains distinct. Attribute timestamps and units are preserved when present; collection time is used when the timestamp is absent or invalid. Motion and contact are exposed as boolean points without units. Other non-numeric values, unknown sensor states, and unlisted capabilities are ignored.
 
-By default, HomeOps stores a new history row only when a point's numeric value differs from its latest stored value. This avoids repeated unchanged simulator and SmartThings observations. Sources whose observations have provider timestamps can opt into the timestamp-based history semantics described below for SMHI.
+By default, HomeOps stores a new raw history row only when a point's numeric value differs from its latest stored value. This avoids repeated unchanged simulator and SmartThings observations. SmartThings stabilization does not discard those changed raw rows: point history retains provider values and timestamps for diagnostics, while `/api/measurements/latest` reads the separately persisted exposed state. Sources whose observations have provider timestamps can opt into the timestamp-based history semantics described below for SMHI.
 
 ### SMHI weather observations
 
@@ -91,8 +93,8 @@ For a remote SQL Server, replace the server and credentials as appropriate. Keep
 ## HTTP API
 
 - `GET /api/devices` lists known devices and their measurement points.
-- `GET /api/measurements/latest` returns the latest stored value for every known point that has recorded data.
-- `GET /api/measurement-points/{pointId}/history` returns newest-first history for one point.
+- `GET /api/measurements/latest` returns the latest exposed value for every known point that has recorded data.
+- `GET /api/measurement-points/{pointId}/history` returns newest-first raw history for one point.
 
 Disabled devices are omitted from the device and latest-measurement lists, and their measurement-point history returns `404 Not Found`. Existing endpoint URLs and response shapes are unchanged.
 

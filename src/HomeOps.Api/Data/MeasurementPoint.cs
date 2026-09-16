@@ -10,4 +10,6 @@ public sealed class MeasurementPoint
     public string? Unit { get; set; }
     public Device Device { get; set; } = null!;
     public ICollection<Measurement> Measurements { get; set; } = [];
+    public ICollection<ExposedMeasurement> ExposedMeasurements { get; set; } = [];
+    public MotionHold? MotionHold { get; set; }
 }

@@ -1,12 +1,10 @@
-using HomeOps.Api.Data;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
 namespace HomeOps.Api.Acquisition;
 
 public sealed class MeasurementIngestionService(
     IEnumerable<IMeasurementSource> sources,
-    IDbContextFactory<HomeOpsDbContext> dbContextFactory,
+    MeasurementPersistenceService persistence,
     IOptions<AcquisitionOptions> options,
     ILogger<MeasurementIngestionService> logger) : BackgroundService
 {
@@ -46,7 +44,7 @@ public sealed class MeasurementIngestionService(
                     logger,
                     stoppingToken,
                     _maxConcurrentSourceReads);
-                var storedCount = await PersistAsync(samples, stoppingToken);
+                var storedCount = await persistence.PersistAsync(samples, stoppingToken);
                 logger.LogInformation(
                     "Stored {MeasurementCount} new measurements from {SourceCount} sources",
                     storedCount,
@@ -108,120 +106,4 @@ public sealed class MeasurementIngestionService(
         }
     }
 
-    private async Task<int> PersistAsync(
-        IReadOnlyCollection<MeasurementSample> samples,
-        CancellationToken cancellationToken)
-    {
-        if (samples.Count == 0)
-        {
-            return 0;
-        }
-
-        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var storedCount = 0;
-
-        foreach (var deviceSamples in samples.GroupBy(x => new { x.Source, x.DeviceId }))
-        {
-            var first = deviceSamples.First();
-            var device = await db.Devices
-                .Include(x => x.MeasurementPoints)
-                .SingleOrDefaultAsync(
-                    x => x.Source == first.Source && x.SourceDeviceId == first.DeviceId,
-                    cancellationToken);
-
-            if (device is null)
-            {
-                device = new Device
-                {
-                    Source = first.Source,
-                    SourceDeviceId = first.DeviceId,
-                    Name = first.DeviceName
-                };
-                db.Devices.Add(device);
-            }
-            else
-            {
-                device.Name = first.DeviceName;
-            }
-
-            var latestValues = new Dictionary<string, LatestMeasurement?>(StringComparer.Ordinal);
-            var timestampsInBatch = new Dictionary<string, HashSet<DateTimeOffset>>(StringComparer.Ordinal);
-            foreach (var sample in deviceSamples)
-            {
-                var point = device.MeasurementPoints.SingleOrDefault(x => x.Key == sample.PointKey);
-                if (point is null)
-                {
-                    point = new MeasurementPoint
-                    {
-                        Key = sample.PointKey,
-                        Name = sample.PointName,
-                        Kind = sample.Kind,
-                        Unit = sample.Unit
-                    };
-                    device.MeasurementPoints.Add(point);
-                }
-                else
-                {
-                    point.Name = sample.PointName;
-                    point.Kind = sample.Kind;
-                    point.Unit = sample.Unit;
-                }
-
-                if (!latestValues.TryGetValue(sample.PointKey, out var previousMeasurement))
-                {
-                    previousMeasurement = point.Id == 0
-                        ? null
-                        : await db.Measurements
-                            .Where(x => x.MeasurementPointId == point.Id)
-                            .OrderByDescending(x => x.Id)
-                            .Select(x => new LatestMeasurement(x.Value, x.Timestamp))
-                            .FirstOrDefaultAsync(cancellationToken);
-                    latestValues.Add(sample.PointKey, previousMeasurement);
-                }
-
-                var shouldStore = sample.StoreForEachTimestamp
-                    ? await HasNewTimestampAsync(point, sample, timestampsInBatch, db, cancellationToken)
-                    : previousMeasurement?.Value != sample.Value;
-
-                if (shouldStore)
-                {
-                    point.Measurements.Add(new Measurement
-                    {
-                        Value = sample.Value,
-                        Timestamp = sample.Timestamp
-                    });
-                    latestValues[sample.PointKey] = new LatestMeasurement(sample.Value, sample.Timestamp);
-                    storedCount++;
-                }
-            }
-        }
-
-        await db.SaveChangesAsync(cancellationToken);
-        return storedCount;
-    }
-
-    private static async Task<bool> HasNewTimestampAsync(
-        MeasurementPoint point,
-        MeasurementSample sample,
-        IDictionary<string, HashSet<DateTimeOffset>> timestampsInBatch,
-        HomeOpsDbContext db,
-        CancellationToken cancellationToken)
-    {
-        if (!timestampsInBatch.TryGetValue(sample.PointKey, out var timestamps))
-        {
-            timestamps = [];
-            timestampsInBatch.Add(sample.PointKey, timestamps);
-        }
-
-        if (!timestamps.Add(sample.Timestamp))
-        {
-            return false;
-        }
-
-        return point.Id == 0 || !await db.Measurements.AnyAsync(
-            x => x.MeasurementPointId == point.Id && x.Timestamp == sample.Timestamp,
-            cancellationToken);
-    }
-
-    private sealed record LatestMeasurement(decimal Value, DateTimeOffset Timestamp);
 }

@@ -24,11 +24,11 @@ public static class HomeOpsEndpoints
             .Produces(StatusCodes.Status404NotFound);
         api.MapGet("/measurements/latest", GetLatestMeasurementsAsync)
             .WithName("GetLatestMeasurements")
-            .WithSummary("Get the latest measurement for every known point")
+            .WithSummary("Get the latest exposed measurement for every known point")
             .Produces<List<LatestMeasurementResponse>>();
         api.MapGet("/measurement-points/{pointId:int}/history", GetHistoryAsync)
             .WithName("GetMeasurementPointHistory")
-            .WithSummary("Get newest-first history for a measurement point")
+            .WithSummary("Get newest-first raw history for a measurement point")
             .Produces<MeasurementHistoryResponse>()
             .Produces<ApiErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status404NotFound);
@@ -111,7 +111,7 @@ public static class HomeOpsEndpoints
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         var latest = await db.MeasurementPoints
             .AsNoTracking()
-            .Where(point => point.Device.IsEnabled && point.Measurements.Any())
+            .Where(point => point.Device.IsEnabled && point.ExposedMeasurements.Any())
             .OrderBy(point => point.Device.Name)
             .ThenBy(point => point.Name)
             .Select(point => new LatestMeasurementResponse
@@ -123,14 +123,12 @@ public static class HomeOpsEndpoints
                 PointName = point.Name,
                 Kind = point.Kind,
                 Unit = point.Unit,
-                Value = point.Measurements
-                    .OrderByDescending(value => value.Timestamp)
-                    .ThenByDescending(value => value.Id)
+                Value = point.ExposedMeasurements
+                    .OrderByDescending(value => value.Id)
                     .Select(value => value.Value)
                     .First(),
-                Timestamp = point.Measurements
-                    .OrderByDescending(value => value.Timestamp)
-                    .ThenByDescending(value => value.Id)
+                Timestamp = point.ExposedMeasurements
+                    .OrderByDescending(value => value.Id)
                     .Select(value => value.Timestamp)
                     .First()
             })

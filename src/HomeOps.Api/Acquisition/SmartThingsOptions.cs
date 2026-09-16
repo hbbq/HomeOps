@@ -7,4 +7,6 @@ public sealed class SmartThingsOptions
     public string Token { get; set; } = string.Empty;
     public int TimeoutSeconds { get; set; } = 15;
     public int MaxConcurrentDeviceReads { get; set; } = 4;
+    public int MotionHoldSeconds { get; set; } = 120;
+    public decimal TemperatureDeadbandCelsius { get; set; } = 0.3m;
 }
