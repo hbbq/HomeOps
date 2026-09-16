@@ -77,6 +77,32 @@ partial class HomeOpsDbContextModelSnapshot : ModelSnapshot
             entity.ToTable("MotionHolds");
         });
 
+        modelBuilder.Entity("HomeOps.Api.Data.SmartThingsAuthorization", entity =>
+        {
+            entity.Property<int>("Id").ValueGeneratedNever().HasColumnType("int");
+            entity.Property<DateTimeOffset>("AccessTokenExpiresAt").HasColumnType("datetimeoffset");
+            entity.Property<string>("InstalledAppId").HasMaxLength(200).HasColumnType("nvarchar(200)");
+            entity.Property<string>("ProtectedAccessToken").IsRequired().HasColumnType("nvarchar(max)");
+            entity.Property<string>("ProtectedRefreshToken").IsRequired().HasColumnType("nvarchar(max)");
+            entity.Property<bool>("RequiresReauthorization").HasColumnType("bit");
+            entity.Property<string>("Scope").HasMaxLength(500).HasColumnType("nvarchar(500)");
+            entity.Property<DateTimeOffset>("UpdatedAt").HasColumnType("datetimeoffset");
+            entity.HasKey("Id");
+            entity.ToTable("SmartThingsAuthorizations");
+        });
+
+        modelBuilder.Entity("HomeOps.Api.Data.SmartThingsAuthorizationState", entity =>
+        {
+            entity.Property<int>("Id").ValueGeneratedOnAdd().HasColumnType("int");
+            SqlServerPropertyBuilderExtensions.UseIdentityColumn(entity.Property<int>("Id"));
+            entity.Property<DateTimeOffset>("ExpiresAt").HasColumnType("datetimeoffset");
+            entity.Property<string>("StateHash").IsRequired().HasMaxLength(64).HasColumnType("nvarchar(64)");
+            entity.HasKey("Id");
+            entity.HasIndex("ExpiresAt");
+            entity.HasIndex("StateHash").IsUnique();
+            entity.ToTable("SmartThingsAuthorizationStates");
+        });
+
         modelBuilder.Entity("HomeOps.Api.Data.MeasurementPoint", entity =>
         {
             entity.HasOne("HomeOps.Api.Data.Device", "Device").WithMany("MeasurementPoints").HasForeignKey("DeviceId").OnDelete(DeleteBehavior.Cascade).IsRequired();

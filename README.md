@@ -16,14 +16,26 @@ All enabled sources run immediately after startup. Sources without their own int
 
 ### SmartThings
 
-SmartThings uses polling and a bearer/PAT token. It automatically discovers all devices the token can access across its authorized locations; device IDs do not need to be configured. It does not implement OAuth refresh or webhooks. Configure the token outside source control:
+SmartThings uses polling and a SmartThings API Access App with OAuth 2.0. It automatically discovers all devices the owner authorizes; device IDs do not need to be configured. Access tokens are renewed automatically, including durable replacement of rotated refresh tokens.
+
+Register an API Access App with the read-only `r:devices:*` scope and an HTTPS redirect URI ending in `/smartthings/oauth/callback`. Configure its credentials outside source control and mount a separate durable directory for ASP.NET Core data-protection keys:
 
 ```powershell
-dotnet user-secrets set --project src/HomeOps.Api "SmartThings:Token" "<token>"
 $env:SmartThings__Enabled = "true"
+$env:SmartThings__AuthenticationMode = "OAuth"
+$env:SmartThings__ClientId = "<client-id>"
+$env:SmartThings__ClientSecret = "<client-secret>"
+$env:SmartThings__RedirectUri = "https://homeops.example/smartthings/oauth/callback"
+$env:SmartThings__DataProtectionKeysPath = "C:\homeops-secrets\data-protection"
 ```
 
-For deployments, supply the same keys through environment or secret configuration. Never put the token in `appsettings.json` or an image layer. Optional settings are `SmartThings__BaseUrl` (default `https://api.smartthings.com/v1/`), `SmartThings__TimeoutSeconds` (default 15), and `SmartThings__MaxConcurrentDeviceReads` (default 4, clamped to 1-16).
+Start HomeOps, then visit `/admin/smartthings/authorize` from the private owner/admin network. That endpoint redirects to SmartThings consent; only the callback needs to be publicly reachable. If a reverse proxy exposes HomeOps, it must deny public access to `/admin/smartthings/authorize` while allowing `/smartthings/oauth/callback`. HomeOps stores a hashed, ten-minute, single-use OAuth state and accepts a callback only once. After consent, encrypted access and refresh tokens are stored in SQL Server. The data-protection key directory must be persistent, backed up separately from the database, writable by the application user, and unavailable to untrusted users. Losing either the database or matching key ring requires reauthorization.
+
+Refresh starts five minutes before access-token expiry and is serialized within the single HomeOps instance. An API 401 forces one refresh and retries that GET once. An invalid/revoked refresh token, an undecryptable credential, or a failed refresh marks authorization as requiring owner action; polling reports the condition without exposing credentials. Revisit `/admin/smartthings/authorize` to recover. HomeOps does not implement SmartThings lifecycle webhooks.
+
+For a temporary migration period, the old PAT is available explicitly with `SmartThings__AuthenticationMode=Pat` and `SmartThings__Token=<token>`. PAT mode does not renew credentials and is not suitable for continuous production operation. Never put tokens or client secrets in `appsettings.json` or an image layer.
+
+Optional settings are `SmartThings__BaseUrl` (default `https://api.smartthings.com/v1/`), `SmartThings__TimeoutSeconds` (default 15), `SmartThings__MaxConcurrentDeviceReads` (default 4, clamped to 1-16), `SmartThings__RefreshSkewMinutes` (default 5), and `SmartThings__AuthorizationStateLifetimeMinutes` (default 10). The authorization and token endpoint URLs are configurable for compatible/test environments.
 
 SmartThings motion and temperature are stabilized before they appear in `GET /api/measurements/latest`. Active motion is exposed immediately and remains active until HomeOps has observed no further active state for `SmartThings__MotionHoldSeconds` (default 120 seconds). Every active observation restarts the hold, and the eventual inactive value is published even if no poll occurs at expiry. Temperature changes smaller than `SmartThings__TemperatureDeadbandCelsius` (default 0.3 °C) relative to the last exposed value are suppressed; crossing the threshold publishes the new value and makes it the new baseline. Fahrenheit points use the equivalent converted threshold. Both settings must be greater than zero.
 

@@ -134,11 +134,7 @@ public sealed class SmartThingsMeasurementSourceTests
         Assert.Equal("good", sample.DeviceId);
         Assert.Equal("Kitchen sensor", sample.DeviceName);
         Assert.Equal(4, handler.Requests.Count);
-        Assert.All(handler.Requests, request =>
-        {
-            Assert.Equal("Bearer", request.AuthorizationScheme);
-            Assert.Equal("secret-token", request.AuthorizationParameter);
-        });
+        Assert.All(handler.Requests, request => Assert.Null(request.AuthorizationScheme));
     }
 
     [Fact]
