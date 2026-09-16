@@ -5,6 +5,7 @@ using HomeOps.Api.Data;
 using HomeOps.Api.SmartThingsAuth;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
@@ -55,6 +56,57 @@ public sealed class SmartThingsOAuthTests
         var restartedProvider = CreateProvider(factory, httpFactory, dataProtection, options, time);
         Assert.Equal("new-access", await restartedProvider.GetAccessTokenAsync(CancellationToken.None));
         Assert.Equal(1, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task CallerCancelledDuringRotatedPairPersistence_PersistsPairBeforeHonoringCancellation()
+    {
+        using var callerCancellation = new CancellationTokenSource();
+        var cancellationInterceptor = new CancelCallerOnSaveInterceptor(callerCancellation);
+        var dbOptions = new DbContextOptionsBuilder<HomeOpsDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .AddInterceptors(cancellationInterceptor)
+            .Options;
+        var factory = new TestDbContextFactory(dbOptions);
+        var time = new TestTimeProvider(new DateTimeOffset(2026, 9, 17, 0, 0, 0, TimeSpan.Zero));
+        var dataProtection = new EphemeralDataProtectionProvider();
+        var handler = new TokenHandler();
+        var options = Options.Create(new SmartThingsOptions
+        {
+            AuthenticationMode = "OAuth",
+            ClientId = "client",
+            ClientSecret = "secret",
+            TokenUrl = "https://api.smartthings.com/oauth/token",
+            RefreshSkewMinutes = 5
+        });
+        var provider = CreateProvider(
+            factory,
+            new TestHttpClientFactory(new HttpClient(handler)),
+            dataProtection,
+            options,
+            time);
+        await provider.StoreAsync(new SmartThingsTokenResponse
+        {
+            AccessToken = "old-access",
+            RefreshToken = "old-refresh",
+            ExpiresIn = 60
+        }, CancellationToken.None);
+        time.Advance(TimeSpan.FromMinutes(2));
+        cancellationInterceptor.CancelOnNextSave = true;
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            provider.GetAccessTokenAsync(callerCancellation.Token));
+
+        Assert.True(callerCancellation.IsCancellationRequested);
+        Assert.Equal(1, handler.RequestCount);
+        await using var db = new HomeOpsDbContext(dbOptions);
+        var stored = await db.SmartThingsAuthorizations.SingleAsync();
+        Assert.Equal(
+            "new-access",
+            dataProtection.CreateProtector("SmartThings.AccessToken.v1").Unprotect(stored.ProtectedAccessToken));
+        Assert.Equal(
+            "new-refresh",
+            dataProtection.CreateProtector("SmartThings.RefreshToken.v1").Unprotect(stored.ProtectedRefreshToken));
     }
 
     [Fact]
@@ -171,6 +223,25 @@ public sealed class SmartThingsOAuthTests
             BearerTokens.Add(request.Headers.Authorization?.Parameter);
             return Task.FromResult(new HttpResponseMessage(
                 BearerTokens.Count == 1 ? HttpStatusCode.Unauthorized : HttpStatusCode.OK));
+        }
+    }
+
+    private sealed class CancelCallerOnSaveInterceptor(CancellationTokenSource callerCancellation) : SaveChangesInterceptor
+    {
+        public bool CancelOnNextSave { get; set; }
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (CancelOnNextSave)
+            {
+                CancelOnNextSave = false;
+                callerCancellation.Cancel();
+            }
+
+            return base.SavingChangesAsync(eventData, result, cancellationToken);
         }
     }
 

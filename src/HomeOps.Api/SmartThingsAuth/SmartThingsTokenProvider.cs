@@ -18,6 +18,7 @@ public sealed class SmartThingsTokenProvider(
     ILogger<SmartThingsTokenProvider> logger)
 {
     private const int AuthorizationId = 1;
+    private static readonly TimeSpan RotatedTokenPersistenceTimeout = TimeSpan.FromSeconds(15);
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
     private readonly SmartThingsOptions _options = options.Value;
     private readonly IDataProtector _accessTokenProtector = dataProtectionProvider.CreateProtector("SmartThings.AccessToken.v1");
@@ -120,7 +121,12 @@ public sealed class SmartThingsTokenProvider(
                 authorization.InstalledAppId = response.InstalledAppId ?? authorization.InstalledAppId;
                 authorization.RequiresReauthorization = false;
                 authorization.UpdatedAt = timeProvider.GetUtcNow();
-                await db.SaveChangesAsync(cancellationToken);
+                using (var persistenceCancellation = new CancellationTokenSource(RotatedTokenPersistenceTimeout))
+                {
+                    await db.SaveChangesAsync(persistenceCancellation.Token);
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
                 return response.AccessToken;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
