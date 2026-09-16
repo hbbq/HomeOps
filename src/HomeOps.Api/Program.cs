@@ -1,5 +1,6 @@
 using HomeOps.Api.Acquisition;
 using HomeOps.Api.Data;
+using HomeOps.Api.Displays;
 using HomeOps.Api.Endpoints;
 using Microsoft.EntityFrameworkCore;
 
@@ -19,6 +20,7 @@ builder.Services.Configure<AcquisitionOptions>(builder.Configuration.GetSection(
 builder.Services.Configure<SimulatorOptions>(builder.Configuration.GetSection("Simulator"));
 builder.Services.Configure<SmartThingsOptions>(builder.Configuration.GetSection("SmartThings"));
 builder.Services.Configure<SmhiWeatherOptions>(builder.Configuration.GetSection("SmhiWeather"));
+builder.Services.AddSingleton<DisplayMessageQueue>();
 
 if (builder.Configuration.GetValue("Simulator:Enabled", true))
 {
