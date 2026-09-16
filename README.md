@@ -93,8 +93,10 @@ For a remote SQL Server, replace the server and credentials as appropriate. Keep
 ## HTTP API
 
 - `GET /api/devices` lists known devices and their measurement points.
-- `GET /api/measurements/latest` returns the latest exposed value for every known point that has recorded data.
-- `GET /api/measurement-points/{pointId}/history` returns newest-first raw history for one point.
+- `GET /api/measurements/latest` returns the latest stored value for every known point that has recorded data.
+- `GET /api/measurement-points/{pointId}/history` returns newest-first history for one point.
+- `POST /api/displays/{id}/messages` queues `{ "text": "..." }` for a display.
+- `GET /api/displays/{id}/messages/next` returns and removes the oldest queued message, or returns `204 No Content` when none is queued.
 
 Disabled devices are omitted from the device and latest-measurement lists, and their measurement-point history returns `404 Not Found`. Existing endpoint URLs and response shapes are unchanged.
 
@@ -105,3 +107,5 @@ GET /api/measurement-points/1/history?from=2026-09-11T00:00:00Z&limit=100
 ```
 
 All values are numeric decimals. The `kind` and `unit` fields describe interpretation; the simulated boolean point uses `kind: "boolean"`, no unit, and values `0` or `1`.
+
+Display queues are in memory and are cleared when HomeOps restarts. Each case-sensitive display ID has an independent FIFO queue limited to 20 messages. Text is limited to 1,024 UTF-8 bytes. A full queue rejects a new message with `429 Too Many Requests`; consuming a message provides at-most-once delivery.

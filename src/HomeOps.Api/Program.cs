@@ -1,5 +1,6 @@
 using HomeOps.Api.Acquisition;
 using HomeOps.Api.Data;
+using HomeOps.Api.Displays;
 using HomeOps.Api.Endpoints;
 using Microsoft.EntityFrameworkCore;
 
@@ -23,6 +24,7 @@ builder.Services.AddOptions<SmartThingsOptions>()
     .Validate(x => x.TemperatureDeadbandCelsius > 0, "SmartThings:TemperatureDeadbandCelsius must be greater than zero.")
     .ValidateOnStart();
 builder.Services.Configure<SmhiWeatherOptions>(builder.Configuration.GetSection("SmhiWeather"));
+builder.Services.AddSingleton<DisplayMessageQueue>();
 
 if (builder.Configuration.GetValue("Simulator:Enabled", true))
 {

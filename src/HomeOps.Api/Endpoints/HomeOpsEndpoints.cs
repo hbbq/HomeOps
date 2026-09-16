@@ -1,4 +1,5 @@
 using HomeOps.Api.Data;
+using HomeOps.Api.Displays;
 using Microsoft.EntityFrameworkCore;
 
 namespace HomeOps.Api.Endpoints;
@@ -32,9 +33,48 @@ public static class HomeOpsEndpoints
             .Produces<MeasurementHistoryResponse>()
             .Produces<ApiErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status404NotFound);
+        api.MapPost("/displays/{displayId}/messages", EnqueueDisplayMessage)
+            .WithName("EnqueueDisplayMessage")
+            .WithSummary("Queue a text message for a display")
+            .Produces(StatusCodes.Status204NoContent)
+            .Produces<ApiErrorResponse>(StatusCodes.Status400BadRequest)
+            .Produces<ApiErrorResponse>(StatusCodes.Status429TooManyRequests);
+        api.MapGet("/displays/{displayId}/messages/next", GetNextDisplayMessage)
+            .WithName("GetNextDisplayMessage")
+            .WithSummary("Get and remove the oldest queued text message for a display")
+            .Produces<DisplayMessageResponse>()
+            .Produces(StatusCodes.Status204NoContent);
 
         return endpoints;
     }
+
+    private static IResult EnqueueDisplayMessage(
+        string displayId,
+        DisplayMessageRequest request,
+        DisplayMessageQueue messageQueue)
+    {
+        if (string.IsNullOrWhiteSpace(request.Text))
+        {
+            return Results.BadRequest(new ApiErrorResponse("'text' must not be empty."));
+        }
+
+        return messageQueue.TryEnqueue(displayId, request.Text) switch
+        {
+            DisplayMessageEnqueueResult.Enqueued => Results.NoContent(),
+            DisplayMessageEnqueueResult.MessageTooLong => Results.BadRequest(new ApiErrorResponse(
+                $"'text' must not exceed {DisplayMessageQueue.MaximumMessageBytes} UTF-8 bytes.")),
+            DisplayMessageEnqueueResult.QueueFull => Results.Json(
+                new ApiErrorResponse(
+                    $"The display queue is full ({DisplayMessageQueue.MaximumQueueDepth} messages)."),
+                statusCode: StatusCodes.Status429TooManyRequests),
+            _ => throw new InvalidOperationException("Unknown display-message enqueue result.")
+        };
+    }
+
+    private static IResult GetNextDisplayMessage(string displayId, DisplayMessageQueue messageQueue) =>
+        messageQueue.TryDequeue(displayId, out var text)
+            ? Results.Ok(new DisplayMessageResponse(text!))
+            : Results.NoContent();
 
     private static async Task<IResult> GetDevicesAsync(
         IDbContextFactory<HomeOpsDbContext> dbContextFactory,

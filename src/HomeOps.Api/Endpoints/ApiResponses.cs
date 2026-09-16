@@ -66,3 +66,7 @@ public sealed class MeasurementHistoryResponse
 }
 
 public sealed record ApiErrorResponse(string Error);
+
+public sealed record DisplayMessageRequest(string? Text);
+
+public sealed record DisplayMessageResponse(string Text);
