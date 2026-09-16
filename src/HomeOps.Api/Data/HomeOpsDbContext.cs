@@ -7,6 +7,8 @@ public sealed class HomeOpsDbContext(DbContextOptions<HomeOpsDbContext> options)
     public DbSet<Device> Devices => Set<Device>();
     public DbSet<MeasurementPoint> MeasurementPoints => Set<MeasurementPoint>();
     public DbSet<Measurement> Measurements => Set<Measurement>();
+    public DbSet<ExposedMeasurement> ExposedMeasurements => Set<ExposedMeasurement>();
+    public DbSet<MotionHold> MotionHolds => Set<MotionHold>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -39,6 +41,26 @@ public sealed class HomeOpsDbContext(DbContextOptions<HomeOpsDbContext> options)
             entity.HasOne(x => x.MeasurementPoint)
                 .WithMany(x => x.Measurements)
                 .HasForeignKey(x => x.MeasurementPointId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ExposedMeasurement>(entity =>
+        {
+            entity.Property(x => x.Value).HasPrecision(18, 4);
+            entity.HasIndex(x => new { x.MeasurementPointId, x.Id });
+            entity.HasOne(x => x.MeasurementPoint)
+                .WithMany(x => x.ExposedMeasurements)
+                .HasForeignKey(x => x.MeasurementPointId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<MotionHold>(entity =>
+        {
+            entity.HasKey(x => x.MeasurementPointId);
+            entity.HasIndex(x => x.DueAt);
+            entity.HasOne(x => x.MeasurementPoint)
+                .WithOne(x => x.MotionHold)
+                .HasForeignKey<MotionHold>(x => x.MeasurementPointId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
     }

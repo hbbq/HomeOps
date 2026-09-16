@@ -44,6 +44,18 @@ partial class HomeOpsDbContextModelSnapshot : ModelSnapshot
             entity.ToTable("MeasurementPoints");
         });
 
+        modelBuilder.Entity("HomeOps.Api.Data.ExposedMeasurement", entity =>
+        {
+            entity.Property<long>("Id").ValueGeneratedOnAdd().HasColumnType("bigint");
+            SqlServerPropertyBuilderExtensions.UseIdentityColumn(entity.Property<long>("Id"));
+            entity.Property<int>("MeasurementPointId").HasColumnType("int");
+            entity.Property<DateTimeOffset>("Timestamp").HasColumnType("datetimeoffset");
+            entity.Property<decimal>("Value").HasPrecision(18, 4).HasColumnType("decimal(18,4)");
+            entity.HasKey("Id");
+            entity.HasIndex("MeasurementPointId", "Id");
+            entity.ToTable("ExposedMeasurements");
+        });
+
         modelBuilder.Entity("HomeOps.Api.Data.Measurement", entity =>
         {
             entity.Property<long>("Id").ValueGeneratedOnAdd().HasColumnType("bigint");
@@ -54,6 +66,15 @@ partial class HomeOpsDbContextModelSnapshot : ModelSnapshot
             entity.HasKey("Id");
             entity.HasIndex("MeasurementPointId", "Timestamp");
             entity.ToTable("Measurements");
+        });
+
+        modelBuilder.Entity("HomeOps.Api.Data.MotionHold", entity =>
+        {
+            entity.Property<int>("MeasurementPointId").HasColumnType("int");
+            entity.Property<DateTimeOffset>("DueAt").HasColumnType("datetimeoffset");
+            entity.HasKey("MeasurementPointId");
+            entity.HasIndex("DueAt");
+            entity.ToTable("MotionHolds");
         });
 
         modelBuilder.Entity("HomeOps.Api.Data.MeasurementPoint", entity =>
@@ -68,7 +89,24 @@ partial class HomeOpsDbContextModelSnapshot : ModelSnapshot
             entity.Navigation("MeasurementPoint");
         });
 
+        modelBuilder.Entity("HomeOps.Api.Data.ExposedMeasurement", entity =>
+        {
+            entity.HasOne("HomeOps.Api.Data.MeasurementPoint", "MeasurementPoint").WithMany("ExposedMeasurements").HasForeignKey("MeasurementPointId").OnDelete(DeleteBehavior.Cascade).IsRequired();
+            entity.Navigation("MeasurementPoint");
+        });
+
+        modelBuilder.Entity("HomeOps.Api.Data.MotionHold", entity =>
+        {
+            entity.HasOne("HomeOps.Api.Data.MeasurementPoint", "MeasurementPoint").WithOne("MotionHold").HasForeignKey("HomeOps.Api.Data.MotionHold", "MeasurementPointId").OnDelete(DeleteBehavior.Cascade).IsRequired();
+            entity.Navigation("MeasurementPoint");
+        });
+
         modelBuilder.Entity("HomeOps.Api.Data.Device", entity => entity.Navigation("MeasurementPoints"));
-        modelBuilder.Entity("HomeOps.Api.Data.MeasurementPoint", entity => entity.Navigation("Measurements"));
+        modelBuilder.Entity("HomeOps.Api.Data.MeasurementPoint", entity =>
+        {
+            entity.Navigation("ExposedMeasurements");
+            entity.Navigation("Measurements");
+            entity.Navigation("MotionHold");
+        });
     }
 }
