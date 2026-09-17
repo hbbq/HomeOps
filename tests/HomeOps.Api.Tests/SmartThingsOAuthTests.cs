@@ -110,6 +110,46 @@ public sealed class SmartThingsOAuthTests
     }
 
     [Fact]
+    public async Task CallerCancelledDuringRefreshExchange_PersistsPairBeforeHonoringCancellation()
+    {
+        using var callerCancellation = new CancellationTokenSource();
+        var dbOptions = new DbContextOptionsBuilder<HomeOpsDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .Options;
+        var factory = new TestDbContextFactory(dbOptions);
+        var time = new TestTimeProvider(new DateTimeOffset(2026, 9, 17, 0, 0, 0, TimeSpan.Zero));
+        var dataProtection = new EphemeralDataProtectionProvider();
+        var handler = new CancelCallerDuringExchangeHandler(callerCancellation);
+        var options = Options.Create(new SmartThingsOptions
+        {
+            AuthenticationMode = "OAuth",
+            ClientId = "client",
+            ClientSecret = "secret",
+            TokenUrl = "https://api.smartthings.com/oauth/token",
+            RefreshSkewMinutes = 5
+        });
+        var provider = CreateProvider(
+            factory,
+            new TestHttpClientFactory(new HttpClient(handler)),
+            dataProtection,
+            options,
+            time);
+        await provider.StoreAsync(new SmartThingsTokenResponse
+        {
+            AccessToken = "old-access",
+            RefreshToken = "old-refresh",
+            ExpiresIn = 60
+        }, CancellationToken.None);
+        time.Advance(TimeSpan.FromMinutes(2));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            provider.GetAccessTokenAsync(callerCancellation.Token));
+
+        Assert.False(handler.ExchangeCancellationWasRequested);
+        await AssertStoredTokenPairAsync(dbOptions, dataProtection);
+    }
+
+    [Fact]
     public async Task AuthorizationState_IsSingleUse()
     {
         var dbOptions = new DbContextOptionsBuilder<HomeOpsDbContext>()
@@ -185,6 +225,42 @@ public sealed class SmartThingsOAuthTests
     }
 
     [Fact]
+    public async Task CallerCancelledDuringAuthorizationExchange_PersistsCredentialsBeforeHonoringCancellation()
+    {
+        using var callerCancellation = new CancellationTokenSource();
+        var dbOptions = new DbContextOptionsBuilder<HomeOpsDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .Options;
+        var factory = new TestDbContextFactory(dbOptions);
+        var time = new TestTimeProvider(new DateTimeOffset(2026, 9, 17, 0, 0, 0, TimeSpan.Zero));
+        var dataProtection = new EphemeralDataProtectionProvider();
+        var handler = new CancelCallerDuringExchangeHandler(callerCancellation);
+        var options = Options.Create(new SmartThingsOptions
+        {
+            AuthenticationMode = "OAuth",
+            ClientId = "client",
+            ClientSecret = "secret",
+            TokenUrl = "https://api.smartthings.com/oauth/token",
+            RedirectUri = "https://homeops.example/smartthings/oauth/callback"
+        });
+        var provider = CreateProvider(
+            factory,
+            new TestHttpClientFactory(new HttpClient(handler)),
+            dataProtection,
+            options,
+            time);
+        var oauth = new SmartThingsOAuthService(factory, provider, options, time);
+        var authorizationUri = await oauth.CreateAuthorizationUriAsync(CancellationToken.None);
+        var state = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(authorizationUri.Query)["state"].Single();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            oauth.CompleteAuthorizationAsync(state, "code", null, callerCancellation.Token));
+
+        Assert.False(handler.ExchangeCancellationWasRequested);
+        await AssertStoredTokenPairAsync(dbOptions, dataProtection);
+    }
+
+    [Fact]
     public async Task ApiUnauthorized_RefreshesAndRetriesOnlyOnce()
     {
         var dbOptions = new DbContextOptionsBuilder<HomeOpsDbContext>()
@@ -232,6 +308,20 @@ public sealed class SmartThingsOAuthTests
         TimeProvider time) =>
         new(dbFactory, httpFactory, dataProtection, options, time, NullLogger<SmartThingsTokenProvider>.Instance);
 
+    private static async Task AssertStoredTokenPairAsync(
+        DbContextOptions<HomeOpsDbContext> dbOptions,
+        IDataProtectionProvider dataProtection)
+    {
+        await using var db = new HomeOpsDbContext(dbOptions);
+        var stored = await db.SmartThingsAuthorizations.SingleAsync();
+        Assert.Equal(
+            "new-access",
+            dataProtection.CreateProtector("SmartThings.AccessToken.v1").Unprotect(stored.ProtectedAccessToken));
+        Assert.Equal(
+            "new-refresh",
+            dataProtection.CreateProtector("SmartThings.RefreshToken.v1").Unprotect(stored.ProtectedRefreshToken));
+    }
+
     private sealed class TestDbContextFactory(DbContextOptions<HomeOpsDbContext> options) : IDbContextFactory<HomeOpsDbContext>
     {
         public HomeOpsDbContext CreateDbContext() => new(options);
@@ -270,6 +360,28 @@ public sealed class SmartThingsOAuthTests
             BearerTokens.Add(request.Headers.Authorization?.Parameter);
             return Task.FromResult(new HttpResponseMessage(
                 BearerTokens.Count == 1 ? HttpStatusCode.Unauthorized : HttpStatusCode.OK));
+        }
+    }
+
+    private sealed class CancelCallerDuringExchangeHandler(CancellationTokenSource callerCancellation) : HttpMessageHandler
+    {
+        public bool ExchangeCancellationWasRequested { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            callerCancellation.Cancel();
+            await Task.Yield();
+            ExchangeCancellationWasRequested = cancellationToken.IsCancellationRequested;
+            cancellationToken.ThrowIfCancellationRequested();
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600,"scope":"r:devices:*"}""",
+                    Encoding.UTF8,
+                    "application/json")
+            };
         }
     }
 

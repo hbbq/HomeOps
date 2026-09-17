@@ -18,7 +18,7 @@ public sealed class SmartThingsTokenProvider(
     ILogger<SmartThingsTokenProvider> logger)
 {
     private const int AuthorizationId = 1;
-    private static readonly TimeSpan RotatedTokenPersistenceTimeout = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan TokenExchangeTimeout = TimeSpan.FromSeconds(15);
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
     private readonly SmartThingsOptions _options = options.Value;
     private readonly IDataProtector _accessTokenProtector = dataProtectionProvider.CreateProtector("SmartThings.AccessToken.v1");
@@ -102,6 +102,8 @@ public sealed class SmartThingsTokenProvider(
                 return accessToken;
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
+            using var tokenExchangeCancellation = new CancellationTokenSource(TokenExchangeTimeout);
             try
             {
                 var response = await RequestTokenAsync(
@@ -110,7 +112,7 @@ public sealed class SmartThingsTokenProvider(
                         ["grant_type"] = "refresh_token",
                         ["refresh_token"] = refreshToken
                     },
-                    cancellationToken);
+                    tokenExchangeCancellation.Token);
                 ValidateTokenResponse(response);
 
                 // Persist the rotated pair together before allowing API use.
@@ -121,10 +123,7 @@ public sealed class SmartThingsTokenProvider(
                 authorization.InstalledAppId = response.InstalledAppId ?? authorization.InstalledAppId;
                 authorization.RequiresReauthorization = false;
                 authorization.UpdatedAt = timeProvider.GetUtcNow();
-                using (var persistenceCancellation = new CancellationTokenSource(RotatedTokenPersistenceTimeout))
-                {
-                    await db.SaveChangesAsync(persistenceCancellation.Token);
-                }
+                await db.SaveChangesAsync(tokenExchangeCancellation.Token);
 
                 cancellationToken.ThrowIfCancellationRequested();
                 return response.AccessToken;
@@ -138,7 +137,7 @@ public sealed class SmartThingsTokenProvider(
                 logger.LogError(exception, "SmartThings token refresh failed; reauthorization is required");
                 authorization.RequiresReauthorization = true;
                 authorization.UpdatedAt = timeProvider.GetUtcNow();
-                await db.SaveChangesAsync(cancellationToken);
+                await db.SaveChangesAsync(tokenExchangeCancellation.Token);
                 throw new SmartThingsAuthorizationRequiredException("SmartThings token refresh failed; reauthorization is required.");
             }
             catch (InvalidOperationException exception)
@@ -146,7 +145,7 @@ public sealed class SmartThingsTokenProvider(
                 logger.LogError(exception, "SmartThings returned an invalid token refresh response; reauthorization is required");
                 authorization.RequiresReauthorization = true;
                 authorization.UpdatedAt = timeProvider.GetUtcNow();
-                await db.SaveChangesAsync(cancellationToken);
+                await db.SaveChangesAsync(tokenExchangeCancellation.Token);
                 throw new SmartThingsAuthorizationRequiredException("SmartThings token refresh failed; reauthorization is required.");
             }
             catch (Exception exception)
