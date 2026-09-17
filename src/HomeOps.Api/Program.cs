@@ -1,3 +1,4 @@
+using HomeOps.Api;
 using HomeOps.Api.Acquisition;
 using HomeOps.Api.Data;
 using HomeOps.Api.Displays;
@@ -118,7 +119,7 @@ if (builder.Configuration.GetValue("SmhiWeather:Enabled", false))
     builder.Services.AddSingleton<IMeasurementSource, SmhiWeatherMeasurementSource>();
 }
 
-builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSystemTimeProvider();
 builder.Services.AddSingleton<MotionHoldScheduleSignal>();
 builder.Services.AddSingleton<MeasurementPersistenceService>();
 builder.Services.AddHostedService<MeasurementIngestionService>();

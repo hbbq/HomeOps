@@ -6,6 +6,7 @@ using HomeOps.Api.SmartThingsAuth;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
@@ -14,6 +15,49 @@ namespace HomeOps.Api.Tests;
 
 public sealed class SmartThingsOAuthTests
 {
+    [Fact]
+    public void ProductionStyleRegistrations_ResolveOAuthServicesWithoutExternalAccess()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddOptions<SmartThingsOptions>().Configure(options =>
+        {
+            options.AuthenticationMode = "OAuth";
+            options.ClientId = "unused-client";
+            options.ClientSecret = "unused-secret";
+        });
+        services.AddDbContextFactory<HomeOpsDbContext>(options =>
+            options.UseInMemoryDatabase(Guid.NewGuid().ToString()));
+        services.AddDataProtection();
+        services.AddHttpClient("SmartThingsOAuth");
+        services.AddSystemTimeProvider();
+        services.AddSingleton<SmartThingsTokenProvider>();
+        services.AddSingleton<SmartThingsOAuthService>();
+
+        using var provider = services.BuildServiceProvider(new ServiceProviderOptions
+        {
+            ValidateOnBuild = true,
+            ValidateScopes = true
+        });
+
+        Assert.Same(TimeProvider.System, provider.GetRequiredService<TimeProvider>());
+        Assert.NotNull(provider.GetRequiredService<SmartThingsTokenProvider>());
+        Assert.NotNull(provider.GetRequiredService<SmartThingsOAuthService>());
+    }
+
+    [Fact]
+    public void SystemTimeProviderRegistration_PreservesTestOverride()
+    {
+        var services = new ServiceCollection();
+        var testTime = new TestTimeProvider(DateTimeOffset.UnixEpoch);
+        services.AddSingleton<TimeProvider>(testTime);
+
+        services.AddSystemTimeProvider();
+
+        using var provider = services.BuildServiceProvider();
+        Assert.Same(testTime, provider.GetRequiredService<TimeProvider>());
+    }
+
     [Fact]
     public async Task ExpiredCredential_RefreshesAndPersistsRotatedPairForNextProvider()
     {
