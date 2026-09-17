@@ -1,7 +1,10 @@
+using HomeOps.Api;
 using HomeOps.Api.Acquisition;
 using HomeOps.Api.Data;
 using HomeOps.Api.Displays;
 using HomeOps.Api.Endpoints;
+using HomeOps.Api.SmartThingsAuth;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -33,21 +36,53 @@ if (builder.Configuration.GetValue("Simulator:Enabled", true))
 
 if (builder.Configuration.GetValue("SmartThings:Enabled", false))
 {
-    var smartThingsToken = builder.Configuration["SmartThings:Token"];
-
-    if (string.IsNullOrWhiteSpace(smartThingsToken))
+    var smartThings = builder.Configuration.GetSection("SmartThings").Get<SmartThingsOptions>() ?? new();
+    var patMode = string.Equals(smartThings.AuthenticationMode, "Pat", StringComparison.OrdinalIgnoreCase);
+    var oauthMode = string.Equals(smartThings.AuthenticationMode, "OAuth", StringComparison.OrdinalIgnoreCase);
+    if (!patMode && !oauthMode)
     {
-        throw new InvalidOperationException(
-            "SmartThings:Token is required when SmartThings is enabled. Supply it through user secrets or an environment variable.");
+        throw new InvalidOperationException("SmartThings:AuthenticationMode must be OAuth or Pat.");
     }
 
+    if (patMode && string.IsNullOrWhiteSpace(smartThings.Token))
+    {
+        throw new InvalidOperationException("SmartThings:Token is required in deprecated Pat mode.");
+    }
+
+    if (oauthMode &&
+        (string.IsNullOrWhiteSpace(smartThings.ClientId) ||
+         string.IsNullOrWhiteSpace(smartThings.ClientSecret) ||
+         !Uri.TryCreate(smartThings.RedirectUri, UriKind.Absolute, out var redirectUri) || redirectUri.Scheme != Uri.UriSchemeHttps ||
+         redirectUri.AbsolutePath != "/smartthings/oauth/callback" ||
+         !Uri.TryCreate(smartThings.AuthorizationUrl, UriKind.Absolute, out var authorizationUri) || authorizationUri.Scheme != Uri.UriSchemeHttps ||
+         !Uri.TryCreate(smartThings.TokenUrl, UriKind.Absolute, out var tokenUri) || tokenUri.Scheme != Uri.UriSchemeHttps ||
+         smartThings.RefreshSkewMinutes < 0 ||
+         smartThings.AuthorizationStateLifetimeMinutes <= 0 ||
+         string.IsNullOrWhiteSpace(smartThings.DataProtectionKeysPath)))
+    {
+        throw new InvalidOperationException(
+            "SmartThings OAuth requires ClientId, ClientSecret, HTTPS endpoint URLs, an HTTPS RedirectUri ending in " +
+            "/smartthings/oauth/callback, valid lifetime settings, and DataProtectionKeysPath.");
+    }
+
+    var dataProtection = builder.Services.AddDataProtection().SetApplicationName("HomeOps");
+    if (oauthMode)
+    {
+        dataProtection.PersistKeysToFileSystem(new DirectoryInfo(Path.GetFullPath(smartThings.DataProtectionKeysPath)));
+    }
+
+    builder.Services.AddSingleton<SmartThingsTokenProvider>();
+    builder.Services.AddTransient<SmartThingsAuthenticationHandler>();
+    builder.Services.AddSingleton<SmartThingsOAuthService>();
+    builder.Services.AddHttpClient("SmartThingsOAuth", client =>
+        client.Timeout = TimeSpan.FromSeconds(Math.Max(1, smartThings.TimeoutSeconds)));
     builder.Services.AddHttpClient("SmartThings", (serviceProvider, client) =>
     {
         var options = serviceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<SmartThingsOptions>>().Value;
         var baseUrl = options.BaseUrl.EndsWith('/') ? options.BaseUrl : $"{options.BaseUrl}/";
         client.BaseAddress = new Uri(baseUrl, UriKind.Absolute);
         client.Timeout = TimeSpan.FromSeconds(Math.Max(1, options.TimeoutSeconds));
-    });
+    }).AddHttpMessageHandler<SmartThingsAuthenticationHandler>();
     builder.Services.AddSingleton<IMeasurementSource, SmartThingsMeasurementSource>();
 }
 
@@ -84,7 +119,7 @@ if (builder.Configuration.GetValue("SmhiWeather:Enabled", false))
     builder.Services.AddSingleton<IMeasurementSource, SmhiWeatherMeasurementSource>();
 }
 
-builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSystemTimeProvider();
 builder.Services.AddSingleton<MotionHoldScheduleSignal>();
 builder.Services.AddSingleton<MeasurementPersistenceService>();
 builder.Services.AddHostedService<MeasurementIngestionService>();
@@ -125,6 +160,11 @@ app.MapGet("/", () => Results.Ok(new ServiceInfoResponse("HomeOps", "v1")))
     .WithTags("Service")
     .Produces<ServiceInfoResponse>();
 app.MapHomeOpsEndpoints();
+if (builder.Configuration.GetValue("SmartThings:Enabled", false) &&
+    string.Equals(builder.Configuration["SmartThings:AuthenticationMode"] ?? "OAuth", "OAuth", StringComparison.OrdinalIgnoreCase))
+{
+    app.MapSmartThingsOAuthEndpoints();
+}
 
 await app.RunAsync();
 

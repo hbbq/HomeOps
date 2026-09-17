@@ -2,17 +2,17 @@ using HomeOps.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
 namespace HomeOps.Api.Migrations;
 
 [DbContext(typeof(HomeOpsDbContext))]
-partial class HomeOpsDbContextModelSnapshot : ModelSnapshot
+[Migration("20260917020000_AddSmartThingsOAuth")]
+partial class AddSmartThingsOAuth
 {
-    protected override void BuildModel(ModelBuilder modelBuilder) => ConfigureModel(modelBuilder);
-
-    internal static void ConfigureModel(ModelBuilder modelBuilder)
+    protected override void BuildTargetModel(ModelBuilder modelBuilder)
     {
         modelBuilder.HasAnnotation("ProductVersion", "8.0.1").HasAnnotation("Relational:MaxIdentifierLength", 128);
         SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);

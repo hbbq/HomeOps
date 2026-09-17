@@ -9,6 +9,8 @@ public sealed class HomeOpsDbContext(DbContextOptions<HomeOpsDbContext> options)
     public DbSet<Measurement> Measurements => Set<Measurement>();
     public DbSet<ExposedMeasurement> ExposedMeasurements => Set<ExposedMeasurement>();
     public DbSet<MotionHold> MotionHolds => Set<MotionHold>();
+    public DbSet<SmartThingsAuthorization> SmartThingsAuthorizations => Set<SmartThingsAuthorization>();
+    public DbSet<SmartThingsAuthorizationState> SmartThingsAuthorizationStates => Set<SmartThingsAuthorizationState>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -62,6 +64,20 @@ public sealed class HomeOpsDbContext(DbContextOptions<HomeOpsDbContext> options)
                 .WithOne(x => x.MotionHold)
                 .HasForeignKey<MotionHold>(x => x.MeasurementPointId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<SmartThingsAuthorization>(entity =>
+        {
+            entity.Property(x => x.Id).ValueGeneratedNever();
+            entity.Property(x => x.InstalledAppId).HasMaxLength(200);
+            entity.Property(x => x.Scope).HasMaxLength(500);
+        });
+
+        modelBuilder.Entity<SmartThingsAuthorizationState>(entity =>
+        {
+            entity.Property(x => x.StateHash).HasMaxLength(64);
+            entity.HasIndex(x => x.StateHash).IsUnique();
+            entity.HasIndex(x => x.ExpiresAt);
         });
     }
 }
