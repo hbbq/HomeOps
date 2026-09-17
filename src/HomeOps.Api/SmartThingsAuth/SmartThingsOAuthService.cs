@@ -15,6 +15,7 @@ public sealed class SmartThingsOAuthService(
     TimeProvider timeProvider)
 {
     private static readonly TimeSpan TokenExchangeTimeout = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan TokenPersistenceTimeout = TimeSpan.FromSeconds(15);
     private readonly SmartThingsOptions _options = options.Value;
 
     public async Task<Uri> CreateAuthorizationUriAsync(CancellationToken cancellationToken)
@@ -85,16 +86,23 @@ public sealed class SmartThingsOAuthService(
             throw new InvalidOperationException("SmartThings did not return an authorization code.");
         }
 
-        using var tokenExchangeCancellation = new CancellationTokenSource(TokenExchangeTimeout);
-        var response = await tokenProvider.RequestTokenAsync(
-            new Dictionary<string, string>
-            {
-                ["grant_type"] = "authorization_code",
-                ["code"] = code,
-                ["redirect_uri"] = _options.RedirectUri
-            },
-            tokenExchangeCancellation.Token);
-        await tokenProvider.StoreAsync(response, tokenExchangeCancellation.Token);
+        SmartThingsTokenResponse response;
+        using (var tokenExchangeCancellation = new CancellationTokenSource(TokenExchangeTimeout, timeProvider))
+        {
+            response = await tokenProvider.RequestTokenAsync(
+                new Dictionary<string, string>
+                {
+                    ["grant_type"] = "authorization_code",
+                    ["code"] = code,
+                    ["redirect_uri"] = _options.RedirectUri
+                },
+                tokenExchangeCancellation.Token);
+        }
+
+        using (var tokenPersistenceCancellation = new CancellationTokenSource(TokenPersistenceTimeout, timeProvider))
+        {
+            await tokenProvider.StoreAsync(response, tokenPersistenceCancellation.Token);
+        }
 
         cancellationToken.ThrowIfCancellationRequested();
     }

@@ -19,6 +19,7 @@ public sealed class SmartThingsTokenProvider(
 {
     private const int AuthorizationId = 1;
     private static readonly TimeSpan TokenExchangeTimeout = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan TokenPersistenceTimeout = TimeSpan.FromSeconds(15);
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
     private readonly SmartThingsOptions _options = options.Value;
     private readonly IDataProtector _accessTokenProtector = dataProtectionProvider.CreateProtector("SmartThings.AccessToken.v1");
@@ -103,7 +104,7 @@ public sealed class SmartThingsTokenProvider(
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            using var tokenExchangeCancellation = new CancellationTokenSource(TokenExchangeTimeout);
+            using var tokenExchangeCancellation = new CancellationTokenSource(TokenExchangeTimeout, timeProvider);
             try
             {
                 var response = await RequestTokenAsync(
@@ -116,6 +117,7 @@ public sealed class SmartThingsTokenProvider(
                 ValidateTokenResponse(response);
 
                 // Persist the rotated pair together before allowing API use.
+                using var tokenPersistenceCancellation = new CancellationTokenSource(TokenPersistenceTimeout, timeProvider);
                 authorization.ProtectedAccessToken = _accessTokenProtector.Protect(response.AccessToken);
                 authorization.ProtectedRefreshToken = _refreshTokenProtector.Protect(response.RefreshToken);
                 authorization.AccessTokenExpiresAt = timeProvider.GetUtcNow().AddSeconds(response.ExpiresIn);
@@ -123,7 +125,7 @@ public sealed class SmartThingsTokenProvider(
                 authorization.InstalledAppId = response.InstalledAppId ?? authorization.InstalledAppId;
                 authorization.RequiresReauthorization = false;
                 authorization.UpdatedAt = timeProvider.GetUtcNow();
-                await db.SaveChangesAsync(tokenExchangeCancellation.Token);
+                await db.SaveChangesAsync(tokenPersistenceCancellation.Token);
 
                 cancellationToken.ThrowIfCancellationRequested();
                 return response.AccessToken;
