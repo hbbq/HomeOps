@@ -14,6 +14,7 @@ public sealed class SmartThingsOAuthService(
     IOptions<SmartThingsOptions> options,
     TimeProvider timeProvider)
 {
+    private static readonly TimeSpan TokenPersistenceTimeout = TimeSpan.FromSeconds(15);
     private readonly SmartThingsOptions _options = options.Value;
 
     public async Task<Uri> CreateAuthorizationUriAsync(CancellationToken cancellationToken)
@@ -92,7 +93,12 @@ public sealed class SmartThingsOAuthService(
                 ["redirect_uri"] = _options.RedirectUri
             },
             cancellationToken);
-        await tokenProvider.StoreAsync(response, cancellationToken);
+        using (var persistenceCancellation = new CancellationTokenSource(TokenPersistenceTimeout))
+        {
+            await tokenProvider.StoreAsync(response, persistenceCancellation.Token);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
     }
 
     private static string HashState(string state) =>
