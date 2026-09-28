@@ -36,7 +36,7 @@ public sealed class SmhiForecastService(
             {
                 throw;
             }
-            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException or IOException)
+            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException or IOException or InvalidDataException)
             {
                 logger.LogWarning(exception, "Could not refresh SMHI forecast");
                 // Throttle retries after an outage while retaining the original retrieval timestamp.

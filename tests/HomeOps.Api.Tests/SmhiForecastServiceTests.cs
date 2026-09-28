@@ -24,6 +24,8 @@ public sealed class SmhiForecastServiceTests
           ]
         }
         """;
+    private const string MalformedGeometryJson = """{"geometry":{"coordinates":[18.08]},"timeSeries":[]}""";
+    private const string MalformedPeriodJson = """{"geometry":{"coordinates":[18.08,59.34]},"timeSeries":[{"time":"2026-09-28T14:00:00Z"}]}""";
 
     [Fact]
     public async Task GetAsync_MapsAllPeriodsAndRetainsRawValuesAndFreshness()
@@ -79,6 +81,41 @@ public sealed class SmhiForecastServiceTests
     {
         var handler = new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
         Assert.Null(await CreateService(handler, new TestClock()).GetAsync(CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData(MalformedGeometryJson)]
+    [InlineData(MalformedPeriodJson)]
+    public async Task GetAsync_MalformedForecastWithoutCache_ReturnsUnavailable(string malformedJson)
+    {
+        var handler = new StubHandler(_ => Json(malformedJson));
+
+        Assert.Null(await CreateService(handler, new TestClock()).GetAsync(CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData(MalformedGeometryJson)]
+    [InlineData(MalformedPeriodJson)]
+    public async Task GetAsync_MalformedForecastReturnsStaleCacheAndThrottlesRetry(string malformedJson)
+    {
+        var clock = new TestClock();
+        var malformed = false;
+        var handler = new StubHandler(_ => Json(malformed ? malformedJson : ForecastJson));
+        var service = CreateService(handler, clock);
+        var first = await service.GetAsync(CancellationToken.None);
+
+        malformed = true;
+        clock.Advance(TimeSpan.FromMinutes(16));
+        var stale = await service.GetAsync(CancellationToken.None);
+
+        Assert.True(stale!.Stale);
+        Assert.Equal(first!.RetrievedAt, stale.RetrievedAt);
+        Assert.Equal(2, handler.Count);
+        Assert.Same(stale, await service.GetAsync(CancellationToken.None));
+        Assert.Equal(2, handler.Count);
+        clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.True((await service.GetAsync(CancellationToken.None))!.Stale);
+        Assert.Equal(3, handler.Count);
     }
 
     [Fact]
