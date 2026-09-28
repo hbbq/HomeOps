@@ -87,7 +87,7 @@ The endpoint is absent when disabled. When enabled, it fetches on demand and reu
 
 ## Run locally
 
-.NET 8 SDK and an existing SQL Server are required.
+.NET 10 SDK and an existing SQL Server are required.
 
 ```powershell
 dotnet restore
