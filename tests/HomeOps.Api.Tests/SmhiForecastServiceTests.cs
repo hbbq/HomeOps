@@ -83,6 +83,46 @@ public sealed class SmhiForecastServiceTests
         Assert.Null(await CreateService(handler, new TestClock()).GetAsync(CancellationToken.None));
     }
 
+    [Fact]
+    public async Task GetAsync_StalledBodyWithoutCache_ReturnsUnavailable()
+    {
+        var handler = new StubHandler(_ => StalledBody());
+        var service = CreateService(handler, new TestClock(), timeoutSeconds: 1);
+
+        Assert.Null(await service.GetAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(1, handler.Count);
+    }
+
+    [Fact]
+    public async Task GetAsync_StalledBodyReturnsStaleCacheAndThrottlesRetry()
+    {
+        var clock = new TestClock();
+        var stall = false;
+        var handler = new StubHandler(_ => stall ? StalledBody() : Json(ForecastJson));
+        var service = CreateService(handler, clock, timeoutSeconds: 1);
+        var first = await service.GetAsync(CancellationToken.None);
+
+        stall = true;
+        clock.Advance(TimeSpan.FromMinutes(16));
+        var stale = await service.GetAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(stale!.Stale);
+        Assert.Equal(first!.RetrievedAt, stale.RetrievedAt);
+        Assert.Same(stale, await service.GetAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(2, handler.Count);
+    }
+
+    [Fact]
+    public async Task GetAsync_CallerCancellationDuringBodyRead_Propagates()
+    {
+        var handler = new StubHandler(_ => StalledBody());
+        var service = CreateService(handler, new TestClock(), timeoutSeconds: 5);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            service.GetAsync(cancellation.Token).WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
     [Theory]
     [InlineData(MalformedGeometryJson)]
     [InlineData(MalformedPeriodJson)]
@@ -126,14 +166,15 @@ public sealed class SmhiForecastServiceTests
         Assert.True(new SmhiForecastOptions { Enabled = true, Latitude = 59.33, Longitude = 18.07 }.IsValid());
     }
 
-    private static SmhiForecastService CreateService(StubHandler handler, TimeProvider clock)
+    private static SmhiForecastService CreateService(StubHandler handler, TimeProvider clock, int timeoutSeconds = 15)
     {
         var client = new HttpClient(handler)
         {
             BaseAddress = new Uri("https://example.test/api/category/snow1g/version/1/")
         };
         return new SmhiForecastService(new StubFactory(client),
-            Options.Create(new SmhiForecastOptions { Enabled = true, Latitude = 59.33, Longitude = 18.07 }),
+            Options.Create(new SmhiForecastOptions { Enabled = true, Latitude = 59.33, Longitude = 18.07,
+                TimeoutSeconds = timeoutSeconds }),
             clock, NullLogger<SmhiForecastService>.Instance);
     }
 
@@ -141,6 +182,30 @@ public sealed class SmhiForecastServiceTests
     {
         Content = new StringContent(json, Encoding.UTF8, "application/json")
     };
+
+    private static HttpResponseMessage StalledBody() => new(HttpStatusCode.OK)
+    {
+        Content = new StreamContent(new StallingStream())
+    };
+
+    private sealed class StallingStream : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() => throw new NotSupportedException();
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return 0;
+        }
+    }
 
     private sealed class StubFactory(HttpClient client) : IHttpClientFactory
     {

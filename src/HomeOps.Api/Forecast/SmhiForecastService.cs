@@ -36,7 +36,9 @@ public sealed class SmhiForecastService(
             {
                 throw;
             }
-            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException or IOException or InvalidDataException)
+            catch (Exception exception) when (
+                exception is HttpRequestException or JsonException or IOException or InvalidDataException ||
+                exception is OperationCanceledException && !cancellationToken.IsCancellationRequested)
             {
                 logger.LogWarning(exception, "Could not refresh SMHI forecast");
                 // Throttle retries after an outage while retaining the original retrieval timestamp.
@@ -53,14 +55,18 @@ public sealed class SmhiForecastService(
 
     private async Task<ForecastResponse> FetchAsync(CancellationToken cancellationToken)
     {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(_options.TimeoutSeconds));
+        var fetchToken = timeout.Token;
         var longitude = _options.Longitude!.Value.ToString("0.######", CultureInfo.InvariantCulture);
         var latitude = _options.Latitude!.Value.ToString("0.######", CultureInfo.InvariantCulture);
         var path = $"geotype/point/lon/{longitude}/lat/{latitude}/data.json";
         using var response = await httpClientFactory.CreateClient("SmhiForecast")
-            .GetAsync(path, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            .GetAsync(path, HttpCompletionOption.ResponseHeadersRead, fetchToken);
         response.EnsureSuccessStatusCode();
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        await using var stream = await response.Content.ReadAsStreamAsync(fetchToken);
+        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: fetchToken);
+        fetchToken.ThrowIfCancellationRequested();
         var root = document.RootElement;
         if (root.ValueKind != JsonValueKind.Object ||
             !root.TryGetProperty("geometry", out var geometry) || geometry.ValueKind != JsonValueKind.Object ||
@@ -78,6 +84,7 @@ public sealed class SmhiForecastService(
         var periods = new List<ForecastPeriod>();
         foreach (var item in series.EnumerateArray())
         {
+            fetchToken.ThrowIfCancellationRequested();
             if (item.ValueKind != JsonValueKind.Object ||
                 !item.TryGetProperty("time", out var time) || time.ValueKind != JsonValueKind.String ||
                 !time.TryGetDateTimeOffset(out var validTime) ||
@@ -86,7 +93,12 @@ public sealed class SmhiForecastService(
                 throw new InvalidDataException("SMHI forecast period is missing time or data.");
             }
 
-            var raw = data.EnumerateObject().ToDictionary(x => x.Name, x => x.Value.Clone());
+            var raw = new Dictionary<string, JsonElement>();
+            foreach (var value in data.EnumerateObject())
+            {
+                fetchToken.ThrowIfCancellationRequested();
+                raw.Add(value.Name, value.Value.Clone());
+            }
             periods.Add(new ForecastPeriod(validTime, Timestamp(item, "intervalParametersStartTime"),
                 Number(raw, "air_temperature"),
                 Number(raw, "precipitation_amount_mean_deterministic"),
@@ -96,9 +108,11 @@ public sealed class SmhiForecastService(
                 Integer(raw, "symbol_code"), raw));
         }
 
-        return new ForecastResponse("SMHI SNOW1gv1", _options.Latitude!.Value, _options.Longitude!.Value,
+        var forecast = new ForecastResponse("SMHI SNOW1gv1", _options.Latitude!.Value, _options.Longitude!.Value,
             gridLatitude, gridLongitude, Timestamp(root, "createdTime"), Timestamp(root, "referenceTime"),
             timeProvider.GetUtcNow(), false, periods);
+        fetchToken.ThrowIfCancellationRequested();
+        return forecast;
     }
 
     private static DateTimeOffset? Timestamp(JsonElement root, string name) =>
