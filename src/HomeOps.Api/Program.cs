@@ -3,6 +3,7 @@ using HomeOps.Api.Acquisition;
 using HomeOps.Api.Data;
 using HomeOps.Api.Displays;
 using HomeOps.Api.Endpoints;
+using HomeOps.Api.Forecast;
 using HomeOps.Api.SmartThingsAuth;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
@@ -27,6 +28,20 @@ builder.Services.AddOptions<SmartThingsOptions>()
     .Validate(x => x.TemperatureDeadbandCelsius > 0, "SmartThings:TemperatureDeadbandCelsius must be greater than zero.")
     .ValidateOnStart();
 builder.Services.Configure<SmhiWeatherOptions>(builder.Configuration.GetSection("SmhiWeather"));
+builder.Services.AddOptions<SmhiForecastOptions>()
+    .Bind(builder.Configuration.GetSection("SmhiForecast"))
+    .Validate(x => x.IsValid(), "SmhiForecast requires valid coordinates, an HTTP(S) BaseUrl, and positive timeout and cache durations when enabled.")
+    .ValidateOnStart();
+if (builder.Configuration.GetValue("SmhiForecast:Enabled", false))
+{
+    builder.Services.AddHttpClient("SmhiForecast", (serviceProvider, client) =>
+    {
+        var options = serviceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<SmhiForecastOptions>>().Value;
+        client.BaseAddress = new Uri(options.BaseUrl.TrimEnd('/') + "/", UriKind.Absolute);
+        client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+    });
+    builder.Services.AddSingleton<SmhiForecastService>();
+}
 builder.Services.AddSingleton<DisplayMessageQueue>();
 
 if (builder.Configuration.GetValue("Simulator:Enabled", true))
@@ -160,6 +175,10 @@ app.MapGet("/", () => Results.Ok(new ServiceInfoResponse("HomeOps", "v1")))
     .WithTags("Service")
     .Produces<ServiceInfoResponse>();
 app.MapHomeOpsEndpoints();
+if (builder.Configuration.GetValue("SmhiForecast:Enabled", false))
+{
+    app.MapSmhiForecastEndpoints();
+}
 if (builder.Configuration.GetValue("SmartThings:Enabled", false) &&
     string.Equals(builder.Configuration["SmartThings:AuthenticationMode"] ?? "OAuth", "OAuth", StringComparison.OrdinalIgnoreCase))
 {

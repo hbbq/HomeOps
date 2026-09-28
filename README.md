@@ -71,6 +71,20 @@ The persisted source is `smhi`, and the configured station ID is its stable devi
 
 SMHI open data is provided under Creative Commons Attribution 4.0 terms. Review the current [SMHI open-data conditions](https://www.smhi.se/data/om-smhis-data/villkor-for-anvandning) when redistributing the data.
 
+### SMHI forecast
+
+The optional forecast resource is separate from station observations and does not write to SQL Server. Configure a point within SMHI's SNOW forecast area, using WGS84 latitude and longitude:
+
+```powershell
+$env:SmhiForecast__Enabled = "true"
+$env:SmhiForecast__Latitude = "59.33"
+$env:SmhiForecast__Longitude = "18.07"
+```
+
+`GET /api/forecast` returns every period provided by [SMHI's SNOW1gv1 point forecast](https://www.smhi.se/data/sok-oppna-data-i-utforskaren/meteorologisk-prognos-api). It reports the requested coordinates, the nearest forecast grid point used by SMHI, `createdTime` and `referenceTime` when provided, and the local `retrievedAt` time. Each period has `validTime`, `intervalParametersStartTime` when provided, selected planning fields, and `rawValues` containing every provider parameter under its original name. The precipitation amount covers the interval from `intervalParametersStartTime` to `validTime`. Missing selected fields and SMHI's `9999` missing-value sentinel appear as `null` in the planning fields; raw values remain unchanged. Units are °C for `temperatureCelsius`, mm for deterministic mean `precipitationAmountMillimeters`, m/s for `windSpeedMetersPerSecond`, and km for `visibilityKilometers`. `precipitationType` and `weatherSymbol` are SMHI codes; consult the [parameter reference](https://opendata.smhi.se/metfcst/snow1gv1/parameters) for their interpretation. Forecast periods are not necessarily one hour apart, so use their supplied validity times rather than assuming a fixed interval.
+
+The endpoint is absent when disabled. When enabled, it fetches on demand and reuses a successful response for 15 minutes (`SmhiForecast__CacheMinutes`). After a failed refresh it serves the last response with `stale: true`, retains its original `retrievedAt` time, and waits one minute before retrying. If no successful response exists, it returns HTTP 503. `SmhiForecast__BaseUrl` defaults to the public SNOW1gv1 API; `SmhiForecast__TimeoutSeconds` defaults to 15. Coordinates, URL, timeout, and cache duration are validated at startup when enabled. No key is required; attribute redistributed data to SMHI under the [SMHI open-data conditions](https://www.smhi.se/data/om-smhis-data/villkor-for-anvandning).
+
 ## Run locally
 
 .NET 8 SDK and an existing SQL Server are required.
@@ -106,6 +120,7 @@ For a remote SQL Server, replace the server and credentials as appropriate. Keep
 
 - `GET /api/devices` lists known devices and their measurement points.
 - `GET /api/measurements/latest` returns the latest stored value for every known point that has recorded data.
+- `GET /api/forecast` returns the configured SMHI point forecast when enabled.
 - `GET /api/measurement-points/{pointId}/history` returns newest-first history for one point.
 - `POST /api/displays/{id}/messages` queues `{ "text": "..." }` for a display.
 - `GET /api/displays/{id}/messages/next` returns and removes the oldest queued message, or returns `204 No Content` when none is queued.
