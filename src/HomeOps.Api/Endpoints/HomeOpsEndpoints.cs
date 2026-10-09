@@ -144,7 +144,7 @@ public static class HomeOpsEndpoints
         return Results.NoContent();
     }
 
-    private static async Task<IResult> GetLatestMeasurementsAsync(
+    internal static async Task<IResult> GetLatestMeasurementsAsync(
         IDbContextFactory<HomeOpsDbContext> dbContextFactory,
         CancellationToken cancellationToken)
     {
@@ -163,6 +163,8 @@ public static class HomeOpsEndpoints
                 PointName = point.Name,
                 Kind = point.Kind,
                 Unit = point.Unit,
+                LastOpened = point.LastOpened,
+                LastClosed = point.LastClosed,
                 Value = point.ExposedMeasurements
                     .OrderByDescending(value => value.Id)
                     .Select(value => value.Value)

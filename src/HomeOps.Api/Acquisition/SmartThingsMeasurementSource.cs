@@ -1,13 +1,16 @@
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
+using HomeOps.Api.Data;
+using Microsoft.EntityFrameworkCore;
 
 namespace HomeOps.Api.Acquisition;
 
 public sealed class SmartThingsMeasurementSource(
     IHttpClientFactory httpClientFactory,
     IOptions<SmartThingsOptions> options,
-    ILogger<SmartThingsMeasurementSource> logger) : IMeasurementSource
+    ILogger<SmartThingsMeasurementSource> logger,
+    IDbContextFactory<HomeOpsDbContext> dbContextFactory) : IMeasurementSource
 {
     private const string SourceName = "smartthings";
 
@@ -43,7 +46,34 @@ public sealed class SmartThingsMeasurementSource(
             {
                 var escapedDeviceId = Uri.EscapeDataString(device.Id);
                 using var status = await GetJsonAsync(httpClient, $"devices/{escapedDeviceId}/status", cancellationToken);
-                return MapStatus(device.Id, device.Name, status.RootElement, DateTimeOffset.UtcNow);
+                var mapped = MapStatus(device.Id, device.Name, status.RootElement, DateTimeOffset.UtcNow);
+                var contacts = mapped.Where(sample => sample.PointKey.EndsWith("/contactSensor/contact", StringComparison.Ordinal)).ToArray();
+                if (contacts.Length == 0 || device.LocationId is null) return mapped;
+                try
+                {
+                    await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+                    var stored = await db.Devices.AsNoTracking().Include(x => x.MeasurementPoints)
+                        .SingleOrDefaultAsync(x => x.Source == SourceName && x.SourceDeviceId == device.Id, cancellationToken);
+                    var progress = stored is null || contacts.Any(sample => !stored.MeasurementPoints.Any(point => point.Key == sample.PointKey))
+                        ? new ContactHistoryProgress()
+                        : new ContactHistoryProgress(stored.ContactHistoryCheckedAt, stored.ContactHistoryNextPage, stored.ContactHistoryScanStartedAt);
+                    var history = await SmartThingsContactHistory.ReadAsync(httpClient, device.Id, device.LocationId,
+                        contacts.Select(sample => sample.PointKey), progress, DateTimeOffset.UtcNow, cancellationToken);
+                    return mapped.Select(sample => history.TryGetValue(sample.PointKey, out var update)
+                        ? sample with { ContactHistory = update } : sample).ToArray();
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    // Status polling must continue when history fails. No progress is returned
+                    // for this read, including any pages preceding the failure.
+                    logger.LogWarning("Could not read contact history for device {DeviceId} ({ErrorType}); retaining history progress",
+                        device.Id, exception.GetType().Name);
+                    return mapped;
+                }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -90,7 +120,7 @@ public sealed class SmartThingsMeasurementSource(
                     }
 
                     var name = GetNonEmptyString(item, "label") ?? GetNonEmptyString(item, "name") ?? deviceId;
-                    devices.TryAdd(deviceId, new SmartThingsDevice(deviceId, name));
+                    devices.TryAdd(deviceId, new SmartThingsDevice(deviceId, name, GetNonEmptyString(item, "locationId")));
                 }
             }
 
@@ -259,5 +289,5 @@ public sealed class SmartThingsMeasurementSource(
         string Kind,
         string? TrueValue = null,
         string? FalseValue = null);
-    private sealed record SmartThingsDevice(string Id, string Name);
+    private sealed record SmartThingsDevice(string Id, string Name, string? LocationId);
 }

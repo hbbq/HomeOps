@@ -40,6 +40,10 @@ public sealed class LatestMeasurementResponse
     public string? Unit { get; init; }
     public decimal Value { get; init; }
     public DateTimeOffset Timestamp { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? LastOpened { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? LastClosed { get; init; }
 }
 
 public sealed class MeasurementPointDetailsResponse

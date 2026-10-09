@@ -4,6 +4,8 @@ using System.Text.Json;
 using HomeOps.Api.Acquisition;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using HomeOps.Api.Data;
+using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 namespace HomeOps.Api.Tests;
@@ -126,7 +128,8 @@ public sealed class SmartThingsMeasurementSourceTests
         var source = new SmartThingsMeasurementSource(
             new StubHttpClientFactory(client),
             options,
-            NullLogger<SmartThingsMeasurementSource>.Instance);
+            NullLogger<SmartThingsMeasurementSource>.Instance,
+            new TestDbContextFactory());
 
         var samples = await source.ReadAsync(CancellationToken.None);
 
@@ -150,7 +153,8 @@ public sealed class SmartThingsMeasurementSourceTests
         var source = new SmartThingsMeasurementSource(
             new StubHttpClientFactory(client),
             options,
-            NullLogger<SmartThingsMeasurementSource>.Instance);
+            NullLogger<SmartThingsMeasurementSource>.Instance,
+            new TestDbContextFactory());
 
         var readTask = source.ReadAsync(CancellationToken.None);
 
@@ -161,6 +165,70 @@ public sealed class SmartThingsMeasurementSourceTests
 
         Assert.Equal(3, samples.Count);
         Assert.Equal(3, handler.StatusRequestCount);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReadAsync_ContactCycleKeepsCurrentStateAndFailureRetainsStoredProgress(bool failHistory)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var factory = new TestDbContextFactory();
+        var persistence = new MeasurementPersistenceService(factory, Options.Create(new SmartThingsOptions()),
+            new MotionHoldScheduleSignal(), TimeProvider.System);
+        var sample = new MeasurementSample("smartthings", "good", "Door", "main/contactSensor/contact",
+            "Contact", "boolean", null, 0m, now);
+        var previous = new ContactHistoryProgress(now.AddMinutes(-1));
+        await persistence.PersistAsync([sample with
+        {
+            ContactHistory = new ContactHistoryUpdate(now.AddMinutes(-10), now.AddMinutes(-9), previous)
+        }], CancellationToken.None);
+        var opened = now.AddSeconds(-6);
+        var closed = opened.AddMilliseconds(4859);
+        var historyReads = 0;
+        var handler = new StubHandler(request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/v1/devices")
+                return JsonResponse("""{"items":[{"deviceId":"good","locationId":"location","label":"Door"}]}""");
+            if (request.RequestUri.AbsolutePath.EndsWith("/status"))
+                return JsonResponse("""{"components":{"main":{"contactSensor":{"contact":{"value":"closed"}}}}}""");
+            historyReads++;
+            if (historyReads == 1)
+                return JsonResponse("""{"items":[],"_links":{"next":{"href":"/history/devices?page=2"}}}""");
+            if (failHistory) return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+            return JsonResponse(JsonSerializer.Serialize(new
+            {
+                items = new[]
+                {
+                    new { deviceId = "good", component = "main", capability = "contactSensor", attribute = "contact",
+                        value = "closed", epoch = closed.ToUnixTimeMilliseconds() },
+                    new { deviceId = "good", component = "main", capability = "contactSensor", attribute = "contact",
+                        value = "open", epoch = opened.ToUnixTimeMilliseconds() }
+                }
+            }));
+        });
+        var client = new HttpClient(handler) { BaseAddress = new Uri("https://api.smartthings.com/v1/") };
+        var source = new SmartThingsMeasurementSource(new StubHttpClientFactory(client),
+            Options.Create(new SmartThingsOptions()), NullLogger<SmartThingsMeasurementSource>.Instance, factory);
+        var observed = Assert.Single(await source.ReadAsync(CancellationToken.None));
+        Assert.Equal(0m, observed.Value);
+        Assert.Equal(2, historyReads);
+        Assert.Equal(failHistory, observed.ContactHistory is null);
+        await persistence.PersistAsync([observed], CancellationToken.None);
+        await using var db = factory.CreateDbContext();
+        var point = Assert.Single(await db.MeasurementPoints.ToListAsync());
+        Assert.Equal(failHistory ? now.AddMinutes(-10) : DateTimeOffset.FromUnixTimeMilliseconds(opened.ToUnixTimeMilliseconds()), point.LastOpened);
+        Assert.Equal(failHistory ? now.AddMinutes(-9) : DateTimeOffset.FromUnixTimeMilliseconds(closed.ToUnixTimeMilliseconds()), point.LastClosed);
+        Assert.Single(await db.Measurements.ToListAsync());
+        Assert.Equal(0m, Assert.Single(await db.ExposedMeasurements.ToListAsync()).Value);
+        if (failHistory) Assert.Equal(previous.CheckedAt, Assert.Single(await db.Devices.ToListAsync()).ContactHistoryCheckedAt);
+    }
+
+    private sealed class TestDbContextFactory : IDbContextFactory<HomeOpsDbContext>
+    {
+        private readonly DbContextOptions<HomeOpsDbContext> _options = new DbContextOptionsBuilder<HomeOpsDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options;
+        public HomeOpsDbContext CreateDbContext() => new(_options);
     }
 
     private sealed class StubHandler(Func<HttpRequestMessage, HttpResponseMessage> responder) : HttpMessageHandler

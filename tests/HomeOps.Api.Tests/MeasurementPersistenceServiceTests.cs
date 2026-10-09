@@ -114,6 +114,65 @@ public sealed class MeasurementPersistenceServiceTests
         Assert.Equal(second.Timestamp, exposed[^1].Timestamp);
     }
 
+    [Fact]
+    public async Task PersistAsync_ContactCycleUpdatesMaximaWithoutChangingCurrentStateOrHistoryRows()
+    {
+        var fixture = new PersistenceFixture();
+        var sample = fixture.Sample("smartthings", "main/contactSensor/contact", 0m, fixture.Timestamp);
+        await fixture.Service.PersistAsync([sample], CancellationToken.None);
+        var opened = fixture.Timestamp.AddMilliseconds(1000);
+        var closed = opened.AddMilliseconds(4859);
+        var progress = new ContactHistoryProgress(fixture.Timestamp.AddMinutes(1));
+        await fixture.Service.PersistAsync([sample with
+        {
+            ContactHistory = new ContactHistoryUpdate(opened, closed, progress)
+        }], CancellationToken.None);
+
+        // No history, older history and unchanged repeats must not clear or regress either maximum.
+        await fixture.Service.PersistAsync([sample], CancellationToken.None);
+        await fixture.Service.PersistAsync([sample with
+        {
+            ContactHistory = new ContactHistoryUpdate(opened.AddSeconds(-1), null, progress)
+        }], CancellationToken.None);
+        await fixture.Service.PersistAsync([sample with
+        {
+            Timestamp = fixture.Timestamp.AddDays(-1),
+            ContactHistory = new ContactHistoryUpdate(opened.AddMinutes(1), null, progress)
+        }], CancellationToken.None);
+
+        await using var db = fixture.CreateDbContext();
+        var point = Assert.Single(await db.MeasurementPoints.ToListAsync());
+        Assert.Equal(opened.AddMinutes(1), point.LastOpened);
+        Assert.Equal(closed, point.LastClosed);
+        Assert.Equal(0m, Assert.Single(await db.ExposedMeasurements.ToListAsync()).Value);
+        Assert.Single(await db.Measurements.ToListAsync());
+        var device = Assert.Single(await db.Devices.ToListAsync());
+        Assert.Equal(progress.CheckedAt, device.ContactHistoryCheckedAt);
+        Assert.Null(device.ContactHistoryNextPage);
+    }
+
+    [Fact]
+    public async Task PersistAsync_EmptyHistoryDoesNotInferContactTimesAndPreservesContinuationOnFailure()
+    {
+        var fixture = new PersistenceFixture();
+        var progress = new ContactHistoryProgress(null, "https://api.smartthings.com/history/devices?page=2", fixture.Timestamp);
+        var sample = fixture.Sample("smartthings", "main/contactSensor/contact", 1m, fixture.Timestamp) with
+        {
+            ContactHistory = new ContactHistoryUpdate(null, null, progress)
+        };
+        await fixture.Service.PersistAsync([sample], CancellationToken.None);
+        // A failed history retrieval carries only the polled state.
+        await fixture.Service.PersistAsync([sample with { ContactHistory = null }], CancellationToken.None);
+        await using var db = fixture.CreateDbContext();
+        var point = Assert.Single(await db.MeasurementPoints.ToListAsync());
+        Assert.Null(point.LastOpened);
+        Assert.Null(point.LastClosed);
+        var device = Assert.Single(await db.Devices.ToListAsync());
+        Assert.Null(device.ContactHistoryCheckedAt);
+        Assert.Equal(progress.NextPage, device.ContactHistoryNextPage);
+        Assert.Equal(progress.ScanStartedAt, device.ContactHistoryScanStartedAt);
+    }
+
     private sealed class PersistenceFixture
     {
         private readonly DbContextOptions<HomeOpsDbContext> _dbOptions =

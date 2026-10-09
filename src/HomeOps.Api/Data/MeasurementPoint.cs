@@ -8,6 +8,8 @@ public sealed class MeasurementPoint
     public required string Name { get; set; }
     public required string Kind { get; set; }
     public string? Unit { get; set; }
+    public DateTimeOffset? LastOpened { get; set; }
+    public DateTimeOffset? LastClosed { get; set; }
     public Device Device { get; set; } = null!;
     public ICollection<Measurement> Measurements { get; set; } = [];
     public ICollection<ExposedMeasurement> ExposedMeasurements { get; set; } = [];

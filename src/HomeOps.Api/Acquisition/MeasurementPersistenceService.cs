@@ -73,12 +73,36 @@ public sealed class MeasurementPersistenceService(
                             Unit = sample.Unit
                         };
                         device.MeasurementPoints.Add(point);
+                        if (sample.Source == "smartthings" && sample.PointKey.EndsWith("/contactSensor/contact", StringComparison.Ordinal))
+                        {
+                            // A newly discovered component needs its own historical bootstrap.
+                            device.ContactHistoryCheckedAt = null;
+                            device.ContactHistoryNextPage = null;
+                            device.ContactHistoryScanStartedAt = null;
+                        }
                     }
                     else
                     {
                         point.Name = sample.PointName;
                         point.Kind = sample.Kind;
                         point.Unit = sample.Unit;
+                    }
+
+                    // History metadata is independent of the polled state and its timestamp.
+                    // Save progress and maxima in the same transaction as this sample batch.
+                    if (sample.Source == "smartthings" &&
+                        sample.PointKey.EndsWith("/contactSensor/contact", StringComparison.Ordinal) &&
+                        sample.ContactHistory is { } history)
+                    {
+                        if (history.LastOpened is { } opened &&
+                            (point.LastOpened is null || opened > point.LastOpened))
+                            point.LastOpened = opened;
+                        if (history.LastClosed is { } closed &&
+                            (point.LastClosed is null || closed > point.LastClosed))
+                            point.LastClosed = closed;
+                        device.ContactHistoryCheckedAt = history.Progress.CheckedAt;
+                        device.ContactHistoryNextPage = history.Progress.NextPage;
+                        device.ContactHistoryScanStartedAt = history.Progress.ScanStartedAt;
                     }
 
                     var previousRaw = await GetLatestRawAsync(

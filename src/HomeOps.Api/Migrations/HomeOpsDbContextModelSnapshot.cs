@@ -21,6 +21,9 @@ partial class HomeOpsDbContextModelSnapshot : ModelSnapshot
         {
             entity.Property<int>("Id").ValueGeneratedOnAdd().HasColumnType("int");
             SqlServerPropertyBuilderExtensions.UseIdentityColumn(entity.Property<int>("Id"));
+            entity.Property<DateTimeOffset?>("ContactHistoryCheckedAt").HasColumnType("datetimeoffset");
+            entity.Property<DateTimeOffset?>("ContactHistoryScanStartedAt").HasColumnType("datetimeoffset");
+            entity.Property<string>("ContactHistoryNextPage").HasColumnType("nvarchar(max)");
             entity.Property<bool>("IsEnabled").ValueGeneratedOnAdd().HasColumnType("bit").HasDefaultValue(true);
             entity.Property<string>("Name").IsRequired().HasMaxLength(200).HasColumnType("nvarchar(200)");
             entity.Property<string>("Source").IsRequired().HasMaxLength(100).HasColumnType("nvarchar(100)");
@@ -36,6 +39,8 @@ partial class HomeOpsDbContextModelSnapshot : ModelSnapshot
             SqlServerPropertyBuilderExtensions.UseIdentityColumn(entity.Property<int>("Id"));
             entity.Property<int>("DeviceId").HasColumnType("int");
             entity.Property<string>("Key").IsRequired().HasMaxLength(100).HasColumnType("nvarchar(100)");
+            entity.Property<DateTimeOffset?>("LastOpened").HasColumnType("datetimeoffset");
+            entity.Property<DateTimeOffset?>("LastClosed").HasColumnType("datetimeoffset");
             entity.Property<string>("Kind").IsRequired().HasMaxLength(50).HasColumnType("nvarchar(50)");
             entity.Property<string>("Name").IsRequired().HasMaxLength(200).HasColumnType("nvarchar(200)");
             entity.Property<string>("Unit").HasMaxLength(50).HasColumnType("nvarchar(50)");
